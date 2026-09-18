@@ -1,4 +1,4 @@
-name: Sanchuang Development project intake
+name: Organization Project intake
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sanchuang-development-project-intake
+  group: sanchuang-project-1-intake
   cancel-in-progress: false
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
       ORG: sanchuang-dev
-      PROJECT_NUMBER: ${{ vars.SANCHUANG_PROJECT_NUMBER }}
+      PROJECT_NUMBER: '1'
       API_VERSION: '2026-03-10'
     steps:
       - name: Sync Organization Issues into Project
@@ -30,8 +30,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
-            echo "::notice::Project intake is staged but inactive. Configure ORG_GITHUB_TOKEN and SANCHUANG_PROJECT_NUMBER to enable it."
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::Project #1 intake is staged but inactive. Configure ORG_GITHUB_TOKEN to enable it."
             exit 0
           fi
 
@@ -57,7 +57,7 @@ jobs:
               continue
             fi
 
-            echo "Adding $issue_url to Sanchuang Development"
+            echo "Adding $issue_url to Organization Project #1"
             if gh api               --method POST               -H 'Accept: application/vnd.github+json'               -H "X-GitHub-Api-Version: ${API_VERSION}"               "/orgs/${ORG}/projectsV2/${PROJECT_NUMBER}/items"               -f type='Issue'               -F id="$issue_id" >/dev/null; then
               added=$((added + 1))
             else
@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
+          if [ -z "${GH_TOKEN:-}" ]; then
             exit 0
           fi
 
