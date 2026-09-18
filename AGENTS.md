@@ -1,128 +1,128 @@
 # Sanchuang Development Organization AI Instructions
 
-Policy revision: `2026-09-18.1`
-Constitution: `v0.1`
+Policy revision: `2026-09-18.2`
+Constitution: `v1.0`
 
-This file is the canonical Organization-level entry for AI-assisted engineering work in repositories owned by `sanchuang-dev`.
+This file is the canonical AI collaboration entry for repositories owned by the `sanchuang-dev` GitHub Organization.
 
-It is intentionally small. Repository-specific rules belong in each repository's own `AGENTS.md`.
+It contains durable Organization rules plus routing to task-specific policy and Skills. Repository-specific architecture, commands, product boundaries, and exceptions belong in each repository.
 
-## Constitution v0.1
+## Constitution v1.0
 
-### 1. Small and verifiable
+### 1. Small and independently verifiable
 
-Prefer the smallest coherent unit of work that can be implemented, reviewed, verified, and reverted independently.
+Prefer the smallest coherent unit of work that can be implemented, reviewed, verified, and reverted without dragging unrelated work with it.
 
-A task is not complete because files changed. Completion requires evidence that the requested outcome is satisfied.
+A task is not complete because code changed. It is complete only when the agreed outcome can be decided from concrete evidence.
 
 ### 2. One concern, one source of truth
 
 Do not maintain the same decision independently in several places.
 
-- code, configuration, workflows, and runtime describe current technical reality;
-- an Issue or explicit task contract owns the requested outcome for a work item;
-- repository docs own repository-specific rules;
-- this repository owns Organization-wide rules and reusable SOPs.
+- code / configuration / workflow / runtime describe current technical reality;
+- GitHub Issue owns the work-item contract and outcome;
+- native GitHub Project `Status` owns coarse lifecycle position;
+- Project fields own structured planning metadata;
+- PR / review / CI own implementation and verification evidence;
+- `feat/* -> dev -> test -> prod` owns environment position unless a repository documents an exception;
+- Organization docs own shared policy and reusable SOPs;
+- repository docs own repository-specific rules and exceptions.
 
-When two projections disagree, repair the stale one instead of creating a third copy.
+When projections disagree, repair the stale projection instead of creating another copy.
 
-### 3. Inspect reality before inference
+### 3. Verify reality before inference
 
-When current behavior matters, inspect the actual repository, code, workflow, configuration, or runtime when practical.
+When current technical state matters, inspect the actual repository, workflow, configuration, branch, or runtime when practical.
 
-Do not let memory, stale documentation, file names, branch names, or generic conventions override observable reality.
+Do not let remembered behavior, stale documentation, branch naming, or generic model knowledge override observable reality.
 
 ### 4. Authority is explicit
 
-Only perform mutations that the current user instruction or task contract authorizes.
+A role may act only within the authority granted by the current task and applicable contract.
 
-Creating an Issue does not automatically authorize implementation. Reviewing does not automatically authorize editing, merging, deploying, closing, deleting, or releasing.
+Creating an Issue does not itself authorize implementation. Reviewing does not authorize editing, merging, acceptance, release, deployment, Project mutation, Issue closure, or reopen unless the current instruction or contract grants that authority.
 
-If authority is unclear for a destructive, external, or outcome-changing action, stop and ask.
+Do not manufacture an extra confirmation round when the maintainer already granted multiple actions explicitly in one instruction.
 
-### 5. Completion requires evidence
+### 5. Conflicts are surfaced
 
-Never claim that a test, build, deployment, review, smoke check, or device check passed unless it actually ran against the relevant change.
+If current instructions, repository contracts, Organization policy, or observable reality materially disagree, identify the conflict. Do not silently invent a convenient interpretation.
 
-If required evidence is unavailable, report the validation gap explicitly.
+### 6. Completion requires evidence
 
-### 6. Keep rules with their owner
+Never report an unexecuted test, build, deployment, review, device check, or smoke check as passed.
 
-Organization-wide rules belong here.
+If required evidence is unavailable, record the validation gap explicitly and match verification cost to the changed surface.
 
-Repository-specific architecture, commands, product boundaries, deployment details, and exceptions belong in that repository.
+### 7. Rules live with their owner
 
-Do not duplicate Organization policy into repositories unless a concrete offline or tooling requirement justifies it.
+Organization-wide rules and reusable SOPs belong in `sanchuang-dev/.github`.
 
-### 7. Prefer executable enforcement
+Repository-specific implementation constraints, build commands, product boundaries, branch exceptions, and deployment details belong in the owning repository.
 
-Mechanical rules such as formatting, linting, type checks, tests, dependency checks, and generated-code checks should live in tooling or CI when practical.
+### 8. Policy is current
 
-Documentation should explain intent and boundaries, not pretend to be a linter.
-
-### 8. Do not invent a branch or environment model
-
-Until a repository explicitly defines its branch and environment semantics, inspect its actual branches, workflows, and deployment configuration.
-
-Do not assume `dev`, `test`, `prod`, Git Flow, trunk-based development, or any other model merely because another repository uses it.
+Use the current retrieved version of this file when it is available. Do not substitute memory for current Organization policy.
 
 ## Coding guidance
 
-1. Understand before changing: read the relevant implementation, nearby types, configuration, tests, and active documentation first.
+1. Understand before changing: inspect relevant implementation, nearby types, tests, configuration, and active documentation.
 2. Make the minimum coherent change required by the accepted outcome.
-3. Preserve public contracts, schemas, state semantics, persistence, security boundaries, and deployment behavior unless the task explicitly changes them.
-4. Prefer existing working patterns over speculative abstractions.
+3. Preserve public contracts, schemas, persistence semantics, security boundaries, and deployment behavior unless the task explicitly changes them.
+4. Prefer an existing working pattern over speculative abstraction.
 5. Do not hide failure with swallowed errors, production mocks, disabled checks, hard-coded local values, or other false-green workarounds.
-6. Comments should explain intent, invariants, constraints, or non-obvious tradeoffs—not restate obvious code.
-7. Remove dead paths only when they are actually verified obsolete; do not preserve compatibility code without an identified consumer.
+6. Comments should explain intent, invariants, constraints, or non-obvious tradeoffs rather than restating code.
+7. Treat compatibility paths as liabilities that need an identified consumer and removal condition.
+8. Put mechanical enforcement in tooling / CI when practical.
 
 ## Testing guidance
 
 Shared principles live in [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md).
 
-In short:
-
-- test behavior and contracts, not incidental implementation shape;
-- use the lowest-cost evidence that can actually prove the claim;
-- strengthen verification when authentication, permissions, persistence, migration, deployment, destructive actions, or external side effects are involved;
-- never weaken verification merely to obtain a green result.
+Use the lowest sufficient evidence, but strengthen verification for authentication, permissions, secrets, persistence, migration, destructive operations, external side effects, signing, deployment, and public contracts.
 
 ## Start here
 
-For work in a `sanchuang-dev` repository:
+When working on a `sanchuang-dev` repository:
 
 1. Retrieve the current version of this file.
-2. Read the target repository's root `AGENTS.md` if one exists.
-3. Read the current Issue, PR, or explicit task contract.
-4. Inspect the relevant code, configuration, workflow, and runtime evidence.
-5. Load only the Organization SOP or policy needed for the task.
+2. Read the target repository's applicable `AGENTS.md` from the branch that actually owns the work, if one exists.
+3. Read the current Issue / PR / explicit task contract.
+4. Load only the Organization policy, SOP, or Skill relevant to the task.
+5. Verify current technical claims against repository / workflow / configuration / branch / runtime evidence.
 
-If this Organization guidance cannot be retrieved when it is required, say so explicitly instead of reconstructing it from memory.
+If current Organization guidance cannot be retrieved when required, say so explicitly instead of reconstructing it from memory.
 
 ## Instruction priority
 
-For what an AI should do on a specific task:
-
 1. current explicit maintainer/user instruction;
 2. current Issue / PR / task contract;
-3. applicable repository-specific `AGENTS.md` or documented exception;
-4. applicable Organization policy or SOP from this repository;
+3. applicable repository-specific `AGENTS.md`, policy, or documented exception;
+4. applicable Organization policy / SOP / Skill from this repository;
 5. generic engineering practice or model defaults.
 
-A higher-priority instruction can change the requested outcome, but it cannot make an unverified technical claim true.
+A higher-priority instruction may change the requested outcome, but it cannot make an unverified technical claim true.
 
-## Factual truth
+## Organization routing
 
-For current technical reality, follow [docs/governance/source-of-truth.md](docs/governance/source-of-truth.md).
-
-Instruction priority and factual truth are different things: authority tells you what you may do; evidence tells you what is actually true.
+| Task | Read |
+| --- | --- |
+| Create or record an engineering work item | [skills/create-work-item/SKILL.md](skills/create-work-item/SKILL.md) |
+| Verify for acceptance, close, decline, duplicate, or reopen work | [skills/close-work-item/SKILL.md](skills/close-work-item/SKILL.md) |
+| Work-item lifecycle / Project Status | [docs/governance/work-item-lifecycle.md](docs/governance/work-item-lifecycle.md) |
+| Determine source-of-truth boundaries | [docs/governance/source-of-truth.md](docs/governance/source-of-truth.md) |
+| Repository / team permissions and production authority | [docs/governance/permissions-model.md](docs/governance/permissions-model.md) |
+| Branch / environment promotion | [docs/engineering/environment-model.md](docs/engineering/environment-model.md) |
+| Testing and evidence | [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md) |
+| Organization AI PR Review | [ai-review/POLICY.md](ai-review/POLICY.md) and [ai-review/OUTPUT-CONTRACT.md](ai-review/OUTPUT-CONTRACT.md) |
+| AI Review execution architecture | [ai-review/GATEWAY.md](ai-review/GATEWAY.md) |
 
 ## Stop conditions
 
 Stop and report the gap instead of guessing when:
 
-- the target repository or task scope is ambiguous;
-- Organization or repository guidance required for the task cannot be retrieved;
-- the task contract materially conflicts with observable technical reality;
-- a destructive, external, merge, deploy, release, or outcome-changing action lacks explicit authority;
-- required evidence is unavailable but would be necessary to claim completion or safety.
+- required Organization guidance cannot be retrieved;
+- the target repository or owning surface is ambiguous;
+- a repository contract conflicts materially with Organization policy and precedence does not resolve the intended action;
+- Issue creation, acceptance, closure, merge, deployment, release, or destructive mutation lacks authority;
+- required evidence is unavailable but necessary to claim completion or safety.
