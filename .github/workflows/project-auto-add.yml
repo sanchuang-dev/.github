@@ -1,0 +1,110 @@
+name: Sanchuang Development project intake
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/project-auto-add.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanchuang-development-project-intake
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+      ORG: sanchuang-dev
+      PROJECT_NUMBER: ${{ vars.SANCHUANG_PROJECT_NUMBER }}
+      API_VERSION: '2026-03-10'
+    steps:
+      - name: Sync Organization Issues into Project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
+            echo "::notice::Project intake is staged but inactive. Configure ORG_GITHUB_TOKEN and SANCHUANG_PROJECT_NUMBER to enable it."
+            exit 0
+          fi
+
+          gh api             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/orgs/${ORG}/projectsV2/${PROJECT_NUMBER}" >/dev/null
+
+          issues_file="$(mktemp)"
+          project_file="$(mktemp)"
+
+          gh api --paginate             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/search/issues?q=org%3A${ORG}+is%3Aissue+is%3Aopen&per_page=100"             --jq '.items[] | [.id, .html_url] | @tsv'             | sort -u > "$issues_file"
+
+          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --format json             --jq '.items[].content.url // empty'             | sort -u > "$project_file"
+
+          added=0
+          existing=0
+          failed=0
+
+          while IFS=$'\t' read -r issue_id issue_url; do
+            [ -n "${issue_id:-}" ] || continue
+            [ -n "${issue_url:-}" ] || continue
+
+            if grep -Fxq "$issue_url" "$project_file"; then
+              existing=$((existing + 1))
+              continue
+            fi
+
+            echo "Adding $issue_url to Sanchuang Development"
+            if gh api               --method POST               -H 'Accept: application/vnd.github+json'               -H "X-GitHub-Api-Version: ${API_VERSION}"               "/orgs/${ORG}/projectsV2/${PROJECT_NUMBER}/items"               -f type='Issue'               -F id="$issue_id" >/dev/null; then
+              added=$((added + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done < "$issues_file"
+
+          echo "Project intake summary: added=$added existing=$existing failed=$failed"
+          test "$failed" -eq 0
+
+      - name: Repair reopened Issues left at Done
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${PROJECT_NUMBER:-}" ]; then
+            exit 0
+          fi
+
+          project_id="$(gh project view "$PROJECT_NUMBER" --owner "$ORG" --format json --jq '.id')"
+          fields_json="$(gh project field-list "$PROJECT_NUMBER" --owner "$ORG" --format json)"
+          status_field_id="$(jq -r '.fields[] | select(.name == "Status") | .id' <<<"$fields_json" | head -n 1)"
+          todo_option_id="$(jq -r '.fields[] | select(.name == "Status") | .options[] | select(.name == "Todo") | .id' <<<"$fields_json" | head -n 1)"
+
+          [ -n "$project_id" ] && [ "$project_id" != "null" ]
+          [ -n "$status_field_id" ] && [ "$status_field_id" != "null" ]
+          [ -n "$todo_option_id" ] && [ "$todo_option_id" != "null" ]
+
+          candidates_file="$(mktemp)"
+          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --query 'is:issue is:open status:Done'             --format json             --jq '.items[] | [.id, (.content.url // "")] | @tsv'             > "$candidates_file"
+
+          while IFS=$'\t' read -r item_id issue_url; do
+            [ -n "${item_id:-}" ] || continue
+            [ -n "${issue_url:-}" ] || continue
+
+            issue_path="${issue_url#https://github.com/}"
+            issue_owner="${issue_path%%/*}"
+            remainder="${issue_path#*/}"
+            issue_repo="${remainder%%/*}"
+            issue_number="${issue_url##*/}"
+
+            [ "$issue_owner" = "$ORG" ] || continue
+            [[ "$issue_number" =~ ^[0-9]+$ ]] || continue
+
+            state_reason="$(gh api               -H 'Accept: application/vnd.github+json'               -H "X-GitHub-Api-Version: ${API_VERSION}"               "/repos/${issue_owner}/${issue_repo}/issues/${issue_number}"               --jq '.state_reason // ""')"
+
+            [ "$state_reason" = "reopened" ] || continue
+
+            gh project item-edit               --id "$item_id"               --project-id "$project_id"               --field-id "$status_field_id"               --single-select-option-id "$todo_option_id" >/dev/null
+          done < "$candidates_file"
