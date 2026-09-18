@@ -1,42 +1,77 @@
 # Source of Truth
 
-Policy revision: `2026-09-18.1`
+Policy revision: `2026-09-18.2`
 
-This document defines where different kinds of truth live inside `sanchuang-dev`.
+Sanchuang uses different sources of truth for different kinds of information. No single surface is authoritative for everything.
 
-## Current technical reality
+## 1. Current technical reality
 
-Use this order when deciding what currently exists or runs:
+For what currently exists or runs, prefer:
 
-1. runtime and deployed environment, when the claim is about runtime behavior;
-2. code, configuration, dependency manifests, and workflow definitions;
+1. runtime / deployed environment when the claim is about runtime behavior;
+2. code, configuration, dependency manifests, workflow definitions, and current branch state;
 3. repository-local technical documentation;
 4. Organization documentation;
-5. comments, historical discussion, and memory.
+5. historical discussion and memory.
 
-A document saying that a workflow exists is not stronger evidence than the workflow file itself.
+Documentation does not override observable runtime or repository reality.
 
-## Work-item truth
+## 2. GitHub Issue — work-item contract and outcome
 
-For a specific task:
+An Issue owns the agreed goal, scope, non-goals, acceptance criteria, contract-changing decisions, evidence links, and final open/closed outcome for one work item.
 
-1. the user's current explicit instruction defines current authority and requested action;
-2. the current Issue / PR / task contract defines the agreed work-item scope and outcome;
-3. PR diff, review, CI, build, and deployment results provide implementation and verification evidence.
+Do not duplicate Project Status, assignees, dates, or linked PR metadata in prose merely to make the Issue look complete.
 
-Implementation evidence does not automatically authorize merge, deployment, release, Issue closure, or acceptance.
+Issue truth and Issue mutation authority are separate: observable completion does not by itself authorize closure or acceptance.
 
-## Repository ownership
+## 3. GitHub Project — management projection
 
-Repository-specific architecture, build commands, branch semantics, environment mappings, secrets usage, deployment procedure, and product boundaries belong to the repository that owns them.
+`Sanchuang Development` uses native Project `Status` only for coarse lifecycle position:
 
-Organization policy must not silently invent repository-specific facts.
+```text
+Todo | In Progress | Done
+```
 
-## Conflict handling
+Project custom fields own structured planning metadata such as Priority, Effort, Start date, and Target date.
 
-When sources disagree:
+Project Status is not Issue acceptance and is not an environment name.
 
-- prefer observable current reality for factual claims;
-- prefer the current explicit task contract for requested outcome;
-- surface material conflicts instead of silently choosing the most convenient interpretation;
-- repair stale documentation when authorized rather than duplicating contradictory truth elsewhere.
+## 4. PR / review / CI — implementation evidence
+
+PR diffs, review results, checks, builds, tests, artifacts, and smoke results are evidence.
+
+They do not automatically accept an Issue, authorize production promotion, or create outcome authority.
+
+## 5. Environment position
+
+The Organization default environment model is:
+
+```text
+feat/* -> dev -> test -> prod
+```
+
+Repository-local exceptions may add compatibility or validation branches, but must document their meaning. Project Status must not be used as an alias for environment position.
+
+## 6. Organization docs — policy and reusable SOPs
+
+`sanchuang-dev/.github` owns Organization-wide policy, shared Skills, lifecycle rules, environment conventions, testing principles, permissions guidance, and AI Review contracts.
+
+## 7. Repository docs — repository-specific truth
+
+Repository-specific architecture, commands, build systems, signing rules, product boundaries, environment exceptions, and deployment details belong in that repository.
+
+## Conflict rule
+
+When sources disagree, first identify which concept is stale and repair that projection.
+
+```text
+Issue              = work-item contract + outcome
+Project Status     = Todo / In Progress / Done management position
+Project fields     = Priority / Effort / dates
+PR / Review / CI   = implementation + verification evidence
+feat/dev/test/prod = environment position
+.github/docs       = Organization policy and SOP
+repo/config/runtime= current technical reality
+```
+
+Authority conflicts are resolved by the instruction-priority model in `AGENTS.md`, not by whichever source looks most complete.
