@@ -24,23 +24,33 @@ jobs:
       ORG: sanchuang-dev
       PROJECT_NUMBER: '1'
       API_VERSION: '2026-03-10'
+
     steps:
-      - name: Sync Organization Issues into Project
+      - name: Validate Project access
         shell: bash
         run: |
           set -euo pipefail
 
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::notice::Project #1 intake is staged but inactive. Configure ORG_GITHUB_TOKEN to enable it."
+            echo "::notice::Project #1 intake is inactive because ORG_GITHUB_TOKEN is not configured."
             exit 0
           fi
 
-          gh api             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/orgs/${ORG}/projectsV2/${PROJECT_NUMBER}" >/dev/null
+          gh project view "$PROJECT_NUMBER"             --owner "$ORG"             --format json             --jq '.id' >/dev/null
+
+      - name: Add open Organization Issues
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            exit 0
+          fi
 
           issues_file="$(mktemp)"
           project_file="$(mktemp)"
 
-          gh api --paginate             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/search/issues?q=org%3A${ORG}+is%3Aissue+is%3Aopen&per_page=100"             --jq '.items[] | [.id, .html_url] | @tsv'             | sort -u > "$issues_file"
+          gh api --paginate             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/search/issues?q=org%3A${ORG}+is%3Aissue+is%3Aopen&per_page=100"             --jq '.items[].html_url'             | sort -u > "$issues_file"
 
           gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --format json             --jq '.items[].content.url // empty'             | sort -u > "$project_file"
 
@@ -48,8 +58,7 @@ jobs:
           existing=0
           failed=0
 
-          while IFS=$'\t' read -r issue_id issue_url; do
-            [ -n "${issue_id:-}" ] || continue
+          while IFS= read -r issue_url; do
             [ -n "${issue_url:-}" ] || continue
 
             if grep -Fxq "$issue_url" "$project_file"; then
@@ -58,9 +67,10 @@ jobs:
             fi
 
             echo "Adding $issue_url to Organization Project #1"
-            if gh api               --method POST               -H 'Accept: application/vnd.github+json'               -H "X-GitHub-Api-Version: ${API_VERSION}"               "/orgs/${ORG}/projectsV2/${PROJECT_NUMBER}/items"               -f type='Issue'               -F id="$issue_id" >/dev/null; then
+            if gh project item-add "$PROJECT_NUMBER"               --owner "$ORG"               --url "$issue_url" >/dev/null; then
               added=$((added + 1))
             else
+              echo "::error::Failed to add $issue_url"
               failed=$((failed + 1))
             fi
           done < "$issues_file"
@@ -80,16 +90,21 @@ jobs:
           project_id="$(gh project view "$PROJECT_NUMBER" --owner "$ORG" --format json --jq '.id')"
           fields_json="$(gh project field-list "$PROJECT_NUMBER" --owner "$ORG" --format json)"
           status_field_id="$(jq -r '.fields[] | select(.name == "Status") | .id' <<<"$fields_json" | head -n 1)"
-          todo_option_id="$(jq -r '.fields[] | select(.name == "Status") | .options[] | select(.name == "Todo") | .id' <<<"$fields_json" | head -n 1)"
+          todo_option_id="$(jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id' <<<"$fields_json" | head -n 1)"
 
           [ -n "$project_id" ] && [ "$project_id" != "null" ]
           [ -n "$status_field_id" ] && [ "$status_field_id" != "null" ]
           [ -n "$todo_option_id" ] && [ "$todo_option_id" != "null" ]
 
-          candidates_file="$(mktemp)"
-          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --query 'is:issue is:open status:Done'             --format json             --jq '.items[] | [.id, (.content.url // "")] | @tsv'             > "$candidates_file"
+          items_json="$(gh project item-list "$PROJECT_NUMBER" --owner "$ORG" --limit 1000 --format json)"
 
-          while IFS=$'\t' read -r item_id issue_url; do
+          jq -r '
+            .items[]
+            | select(.status == "Done")
+            | select(.content.url != null)
+            | [.id, .content.url]
+            | @tsv
+          ' <<<"$items_json" | while IFS=$'\t' read -r item_id issue_url; do
             [ -n "${item_id:-}" ] || continue
             [ -n "${issue_url:-}" ] || continue
 
@@ -106,5 +121,6 @@ jobs:
 
             [ "$state_reason" = "reopened" ] || continue
 
+            echo "Repairing reopened $issue_url from Done to Todo"
             gh project item-edit               --id "$item_id"               --project-id "$project_id"               --field-id "$status_field_id"               --single-select-option-id "$todo_option_id" >/dev/null
-          done < "$candidates_file"
+          done
