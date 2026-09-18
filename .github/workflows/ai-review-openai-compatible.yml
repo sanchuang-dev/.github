@@ -66,3 +66,35 @@ jobs:
           test "$base_sha" = "$EXPECTED_BASE_SHA"
           test "$head_sha" = "$EXPECTED_HEAD_SHA"
 
+      - name: Build trusted review package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          work="$RUNNER_TEMP/sanchuang-review"
+          mkdir -p "$work"
+
+          gh api             -H 'Accept: application/vnd.github.v3.diff'             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"             > "$work/diff.patch"
+
+          diff_bytes="$(wc -c < "$work/diff.patch" | tr -d ' ')"
+          if [ "$diff_bytes" -gt 160000 ]; then
+            head -c 160000 "$work/diff.patch" > "$work/diff.truncated"
+            mv "$work/diff.truncated" "$work/diff.patch"
+            echo "The PR diff exceeded 160000 bytes and was truncated. Treat this as a validation gap." > "$work/runtime-gap.txt"
+          else
+            : > "$work/runtime-gap.txt"
+          fi
+
+          fetch_base_file() {
+            path="$1"
+            output="$2"
+            if ! gh api               -H 'Accept: application/vnd.github.raw+json'               "repos/${GITHUB_REPOSITORY}/contents/${path}?ref=${EXPECTED_BASE_SHA}"               > "$output" 2>/dev/null; then
+              : > "$output"
+            fi
+          }
+
+          fetch_base_file "AGENTS.md" "$work/repo-agents.md"
+          fetch_base_file ".github/ai-review/profile.md" "$work/review-profile.md"
+
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100"             --paginate             --jq '.[] | [.filename, .status, (.additions|tostring), (.deletions|tostring)] | @tsv'             > "$work/files.tsv"
+
