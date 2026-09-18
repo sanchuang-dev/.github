@@ -176,7 +176,7 @@ jobs:
             if [ "$issue_state" = "CLOSED" ] && [ "$project_status" != "Done" ]; then
               gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$done_option_id" >/dev/null
               normalized_done=$((normalized_done + 1))
-            elif [ "$issue_state" = "OPEN" ] && [ "$project_status" = "Done" ]; then
+            elif [ "$issue_state" = "OPEN" ] && { [ -z "$project_status" ] || [ "$project_status" = "Done" ]; }; then
               gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$todo_option_id" >/dev/null
               normalized_todo=$((normalized_todo + 1))
             fi
