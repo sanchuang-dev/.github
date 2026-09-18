@@ -1,0 +1,94 @@
+name: Sanchuang AI Review Gateway
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
+      base_sha:
+        description: Exact trusted PR base SHA
+        required: true
+        type: string
+      head_sha:
+        description: Exact untrusted PR head SHA
+        required: true
+        type: string
+      gateway_url:
+        description: Trusted Organization AI Review Gateway endpoint
+        required: true
+        type: string
+    secrets:
+      gateway_token:
+        description: Optional bearer token used only to authenticate to the trusted gateway
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Validate trusted gateway endpoint
+        shell: bash
+        env:
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+        run: |
+          set -euo pipefail
+          case "$GATEWAY_URL" in
+            https://*) ;;
+            *)
+              echo "::error::AI Review Gateway URL must use HTTPS."
+              exit 1
+              ;;
+          esac
+
+      - name: Dispatch immutable review identity
+        shell: bash
+        env:
+          GATEWAY_URL: ${{ inputs.gateway_url }}
+          GATEWAY_TOKEN: ${{ secrets.gateway_token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          payload="$(
+            jq -n               --arg repository "$REPOSITORY"               --argjson pr_number "$PR_NUMBER"               --arg base_sha "$BASE_SHA"               --arg head_sha "$HEAD_SHA"               --arg run_id "$RUN_ID"               --arg run_attempt "$RUN_ATTEMPT"               '{
+                repository: $repository,
+                pr_number: $pr_number,
+                base_sha: $base_sha,
+                head_sha: $head_sha,
+                github_run_id: $run_id,
+                github_run_attempt: $run_attempt,
+                contract: "sanchuang-ai-review-output/v1"
+              }'
+          )"
+
+          args=(
+            --fail-with-body
+            --silent
+            --show-error
+            --retry 2
+            --connect-timeout 10
+            --max-time 90
+            -H 'Content-Type: application/json'
+            -H 'Accept: application/json'
+          )
+
+          if [ -n "${GATEWAY_TOKEN:-}" ]; then
+            args+=(-H "Authorization: Bearer $GATEWAY_TOKEN")
+          fi
+
+          curl "${args[@]}"             --data "$payload"             "$GATEWAY_URL"
+
+          echo
+          echo "Dispatched AI review for $REPOSITORY#$PR_NUMBER at head $HEAD_SHA."
