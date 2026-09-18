@@ -25,59 +25,64 @@ jobs:
       PROJECT_NUMBER: '1'
 
     steps:
-      - name: Validate Project access
+      - name: Validate Project and repository access
         shell: bash
         run: |
           set -euo pipefail
 
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::notice::Project #1 intake is inactive because ORG_GITHUB_TOKEN is not configured."
-            exit 0
+            echo "::error::Project #1 intake is inactive because ORG_GITHUB_TOKEN is not configured."
+            exit 1
           fi
 
-          gh project view "$PROJECT_NUMBER" \
-            --owner "$ORG" \
-            --format json \
-            --jq '.id' >/dev/null
+          gh project view "$PROJECT_NUMBER"             --owner "$ORG"             --format json             --jq '.id' >/dev/null
 
-      - name: Add open Organization Issues
+          repos_file="$(mktemp)"
+          gh api --paginate             "/orgs/${ORG}/repos?type=all&per_page=100"             --jq '.[].full_name'             | sort -u > "$repos_file"
+
+          repo_count="$(wc -l < "$repos_file" | tr -d ' ')"
+          if [ "$repo_count" -eq 0 ]; then
+            echo "::error::ORG_GITHUB_TOKEN cannot see any repositories in $ORG."
+            exit 1
+          fi
+
+          expected_count="$(
+            gh api "/orgs/${ORG}"               --jq '(.public_repos // 0) + (.total_private_repos // 0)'               2>/dev/null || printf '0'
+          )"
+
+          if [[ "$expected_count" =~ ^[0-9]+$ ]]             && [ "$expected_count" -gt 0 ]             && [ "$repo_count" -lt "$expected_count" ]; then
+            echo "::error::ORG_GITHUB_TOKEN sees only $repo_count of $expected_count organization repositories. Grant the token all-repository access before trusting Project intake."
+            exit 1
+          fi
+
+          echo "Repository visibility check: accessible=$repo_count expected=${expected_count:-unknown}"
+
+      - name: Reconcile Organization Issues into Project
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            exit 0
-          fi
-
+          repos_file="$(mktemp)"
           issues_file="$(mktemp)"
           project_file="$(mktemp)"
+
+          gh api --paginate             "/orgs/${ORG}/repos?type=all&per_page=100"             --jq '.[].full_name'             | sort -u > "$repos_file"
 
           : > "$issues_file"
 
           while IFS= read -r repository; do
             [ -n "${repository:-}" ] || continue
 
-            gh issue list \
-              --repo "$repository" \
-              --state open \
-              --limit 1000 \
-              --json url \
-              --jq '.[].url' >> "$issues_file"
-          done < <(
-            gh repo list "$ORG" \
-              --limit 1000 \
-              --json nameWithOwner \
-              --jq '.[].nameWithOwner'
-          )
+            gh issue list               --repo "$repository"               --state all               --limit 1000               --json url               --jq '.[].url' >> "$issues_file"
+          done < "$repos_file"
 
           sort -u -o "$issues_file" "$issues_file"
 
-          gh project item-list "$PROJECT_NUMBER" \
-            --owner "$ORG" \
-            --limit 1000 \
-            --format json \
-            --jq '.items[].content.url // empty' \
-            | sort -u > "$project_file"
+          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --format json             --jq '.items[].content.url // empty'             | sort -u > "$project_file"
+
+          repo_count="$(wc -l < "$repos_file" | tr -d ' ')"
+          issue_count="$(wc -l < "$issues_file" | tr -d ' ')"
+          project_url_count="$(wc -l < "$project_file" | tr -d ' ')"
 
           added=0
           existing=0
@@ -93,9 +98,7 @@ jobs:
 
             echo "Adding $issue_url to Organization Project #1"
 
-            if gh project item-add "$PROJECT_NUMBER" \
-              --owner "$ORG" \
-              --url "$issue_url" >/dev/null; then
+            if gh project item-add "$PROJECT_NUMBER"               --owner "$ORG"               --url "$issue_url" >/dev/null; then
               added=$((added + 1))
             else
               echo "::error::Failed to add $issue_url"
@@ -103,62 +106,60 @@ jobs:
             fi
           done < "$issues_file"
 
-          echo "Project intake summary: added=$added existing=$existing failed=$failed"
+          echo "Project intake summary: repos=$repo_count issues=$issue_count project_urls_before=$project_url_count added=$added existing=$existing failed=$failed"
+
           test "$failed" -eq 0
 
-      - name: Repair reopened Issues left at Done
+          if [ $((added + existing)) -ne "$issue_count" ]; then
+            echo "::error::Project reconciliation did not account for every discovered Issue."
+            exit 1
+          fi
+
+      - name: Normalize Project lifecycle projection
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            exit 0
-          fi
-
           project_id="$(
-            gh project view "$PROJECT_NUMBER" \
-              --owner "$ORG" \
-              --format json \
-              --jq '.id'
+            gh project view "$PROJECT_NUMBER"               --owner "$ORG"               --format json               --jq '.id'
           )"
 
           fields_json="$(
-            gh project field-list "$PROJECT_NUMBER" \
-              --owner "$ORG" \
-              --format json
+            gh project field-list "$PROJECT_NUMBER"               --owner "$ORG"               --format json
           )"
 
           status_field_id="$(
-            jq -r '.fields[] | select(.name == "Status") | .id' \
-              <<<"$fields_json" | head -n 1
+            jq -r '.fields[] | select(.name == "Status") | .id'               <<<"$fields_json" | head -n 1
           )"
 
           todo_option_id="$(
-            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id' \
-              <<<"$fields_json" | head -n 1
+            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id'               <<<"$fields_json" | head -n 1
+          )"
+
+          done_option_id="$(
+            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Done") | .id'               <<<"$fields_json" | head -n 1
           )"
 
           [ -n "$project_id" ] && [ "$project_id" != "null" ]
           [ -n "$status_field_id" ] && [ "$status_field_id" != "null" ]
           [ -n "$todo_option_id" ] && [ "$todo_option_id" != "null" ]
+          [ -n "$done_option_id" ] && [ "$done_option_id" != "null" ]
 
           items_json="$(
-            gh project item-list "$PROJECT_NUMBER" \
-              --owner "$ORG" \
-              --limit 1000 \
-              --format json
+            gh project item-list "$PROJECT_NUMBER"               --owner "$ORG"               --limit 1000               --format json
           )"
 
-          jq -r '
-            .items[]
-            | select(.status == "Done")
-            | select(.content.url != null)
-            | [.id, .content.url]
-            | @tsv
-          ' <<<"$items_json" |
-          while IFS=$'\t' read -r item_id issue_url; do
+          normalized_done=0
+          normalized_todo=0
+
+          while IFS=$'\t' read -r item_id project_status issue_url; do
             [ -n "${item_id:-}" ] || continue
             [ -n "${issue_url:-}" ] || continue
+
+            case "$issue_url" in
+              https://github.com/${ORG}/*/issues/*) ;;
+              *) continue ;;
+            esac
 
             issue_path="${issue_url#https://github.com/}"
             issue_owner="${issue_path%%/*}"
@@ -166,23 +167,26 @@ jobs:
             issue_repo="${remainder%%/*}"
             issue_number="${issue_url##*/}"
 
-            [ "$issue_owner" = "$ORG" ] || continue
             [[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 
-            state_reason="$(
-              gh issue view "$issue_number" \
-                --repo "${issue_owner}/${issue_repo}" \
-                --json stateReason \
-                --jq '.stateReason // ""'
+            issue_state="$(
+              gh issue view "$issue_number"                 --repo "${issue_owner}/${issue_repo}"                 --json state                 --jq '.state'
             )"
 
-            [ "$state_reason" = "REOPENED" ] || [ "$state_reason" = "reopened" ] || continue
+            if [ "$issue_state" = "CLOSED" ] && [ "$project_status" != "Done" ]; then
+              gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$done_option_id" >/dev/null
+              normalized_done=$((normalized_done + 1))
+            elif [ "$issue_state" = "OPEN" ] && [ "$project_status" = "Done" ]; then
+              gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$todo_option_id" >/dev/null
+              normalized_todo=$((normalized_todo + 1))
+            fi
+          done < <(
+            jq -r '
+              .items[]
+              | select(.content.url != null)
+              | [.id, (.status // ""), .content.url]
+              | @tsv
+            ' <<<"$items_json"
+          )
 
-            echo "Repairing reopened $issue_url from Done to Todo"
-
-            gh project item-edit \
-              --id "$item_id" \
-              --project-id "$project_id" \
-              --field-id "$status_field_id" \
-              --single-select-option-id "$todo_option_id" >/dev/null
-          done
+          echo "Project lifecycle normalization: closed_to_done=$normalized_done open_done_to_todo=$normalized_todo"
