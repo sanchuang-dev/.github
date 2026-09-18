@@ -1,20 +1,20 @@
 # Sanchuang Development · Organization Engineering
 
-This repository is the canonical home for Organization-wide engineering guidance used across `sanchuang-dev`.
+This repository is the canonical engineering-governance home for `sanchuang-dev`.
 
-## What belongs here
+## Entry points
 
-- Organization-level AI / engineering instructions
-- Shared governance and source-of-truth rules
-- Shared testing principles
-- Reusable SOPs or Skills that are truly cross-repository
+- [AGENTS.md](./AGENTS.md) — Organization AI / engineering constitution and routing
+- [Work-item lifecycle](./docs/governance/work-item-lifecycle.md)
+- [Source of truth](./docs/governance/source-of-truth.md)
+- [Permissions model](./docs/governance/permissions-model.md)
+- [Environment model](./docs/engineering/environment-model.md)
+- [Testing standard](./docs/engineering/testing-standard.md)
+- [AI Review policy](./ai-review/POLICY.md)
+- [AI Review gateway](./ai-review/GATEWAY.md)
 
-## What does not belong here
+## Ownership rule
 
-Repository-specific architecture, build commands, product rules, deployment details, secrets, and environment-specific configuration belong in the repository that owns them.
+Organization-wide policy and reusable SOPs live here. Repository-specific architecture, build commands, deployment details, product constraints, and documented exceptions live in the repository that owns them.
 
-## Entry point
-
-AI-assisted engineering work starts with [AGENTS.md](./AGENTS.md).
-
-Current policy revision: `2026-09-18.1`
+Current policy revision: `2026-09-18.2`
