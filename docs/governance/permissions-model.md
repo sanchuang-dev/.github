@@ -2,79 +2,123 @@
 
 Policy revision: `2026-09-18.2`
 
-This document defines the target access model for `sanchuang-dev`. Apply least privilege without turning ordinary development into ceremony.
+This is the target access model for `sanchuang-dev`. It is deliberately stricter around release and infrastructure than around ordinary development.
 
-## Principles
+## 1. Organization owners
 
-- Organization Owner is an exceptional role, not a normal engineering permission.
-- Day-to-day access should be granted through teams and repository roles.
-- Production authority is narrower than development authority.
-- Secrets and deployment credentials belong to the narrowest repository/environment scope that can support the workflow.
-- Automation receives only the permissions required for its job.
+Organization Owner is exceptional authority.
 
-## Organization roles
+Target:
 
-| Role | Intended users | Normal authority |
-| --- | --- | --- |
-| Owner | company principal + designated technical owner | Organization administration, emergency recovery, billing/security settings |
-| Release Maintainer | small trusted release group | Maintain/Admin only where production workflows require it; production promotion |
-| Maintainer | technical leads / repository maintainers | Maintain on owned repositories, triage/review, workflow stewardship |
-| Developer | ordinary engineers | Write on assigned repositories, feature branches, PRs |
-| Reviewer / QA | review or acceptance participants | Triage or Read unless code changes are part of their job |
-| Automation | GitHub Apps / Actions / bots | explicit machine permissions only |
+- company principal: Owner;
+- designated technical owner: Owner;
+- ordinary engineers: not Owners.
 
-## Base permissions
+Owners exist for Organization administration, recovery, policy, billing/security settings, and exceptional repository administration. Do not use Owner as a convenience substitute for repository/team permissions.
+
+## 2. Team model
+
+Create these teams as the Organization grows:
+
+| Team | Repository role / purpose |
+| --- | --- |
+| `engineering` | normal engineers; Write on assigned application repositories |
+| `mobile-maintainers` | Maintain on Android/iOS; review and repository stewardship |
+| `infra-maintainers` | Maintain on gateway/infrastructure repositories |
+| `release-managers` | narrow group allowed to perform production promotion/deployment |
+| `qa-reviewers` | Triage/Read where review/acceptance does not require code write |
+| automation identities | GitHub Apps / Actions with explicit machine permissions only |
+
+A person may belong to several teams; do not solve every responsibility by granting Admin.
+
+## 3. Base permission
 
 Target Organization base permission: `None` or `Read`.
 
-Do not use Organization-wide `Write` merely because the team is small. Give write access through repository teams.
+Never use Organization-wide `Write` merely because the team is currently small. Grant write authority through teams/repositories so future membership does not silently widen access.
 
-## Repository roles
+## 4. Repository matrix
 
-- `Read`: inspect code and evidence.
-- `Triage`: manage Issues / PR metadata without code write authority.
-- `Write`: normal implementation.
-- `Maintain`: repository stewardship without unnecessary destructive Organization authority.
-- `Admin`: exceptional; use for repositories that truly require settings/secrets/rules management.
+### dr-card-android / dr-card-ios
 
-## Environment authority
+- engineering: Write
+- mobile-maintainers: Maintain
+- release-managers: Maintain; production release authority supplied separately by rules/environment controls
+- qa-reviewers: Triage or Read
+- Owners: emergency/admin authority
+
+### 3chuang-ai-gateway
+
+- engineering: Read by default
+- infra-maintainers: Maintain
+- release-managers: Maintain/Admin only if repository settings require it
+- ordinary mobile developers: no implicit write
+- Owners: emergency/admin authority
+
+The gateway is a sensitive infrastructure repository and should have a smaller write set than application code.
+
+## 5. Branch and ruleset target
 
 ### dev
 
-Normal developers may contribute through PRs and repository workflows.
+- changes normally arrive through PR;
+- prevent deletion and force push;
+- require relevant CI checks once the repository has meaningful CI;
+- Maintainers may retain a narrowly scoped bypass for recovery.
 
 ### test
 
-Promotion should come from `dev`. Direct ad-hoc work on `test` is discouraged.
+- promotion normally comes from `dev`;
+- prevent deletion and force push;
+- require PR and required checks;
+- direct feature work on `test` is not normal.
 
 ### prod
 
-Production promotion is restricted to Owners / Release Maintainers or an explicitly trusted automation path.
+- promotion comes from `test` or a documented repository-specific release gate;
+- prevent deletion and force push;
+- require PR;
+- require all relevant checks;
+- require release authority / environment approval where available;
+- bypass is restricted to Owners for emergency recovery.
 
-Production deployment credentials must not be exposed to ordinary feature branches.
+A repository-specific validation branch such as `check` may add a stricter gate but must not create an undocumented way around `prod`.
 
-## Sensitive repositories
+## 6. Environment authority
 
-Infrastructure, gateway, signing, release, identity, billing, or credential-management repositories should use narrower Admin and secret access than ordinary application repositories.
+### dev
 
-## Secrets
+Normal developers may contribute under repository rules.
 
-Prefer, in order:
+### test
+
+Promotion authority is narrower than feature development. Direct ad-hoc implementation should not occur here.
+
+### prod
+
+Only Owners, Release Maintainers, or explicitly trusted automation may promote/deploy production.
+
+Production credentials must not be exposed to ordinary feature branches.
+
+## 7. Secrets
+
+Prefer the narrowest workable scope:
 
 1. environment-scoped secrets for production-only credentials;
 2. repository secrets for credentials owned by one repository;
-3. Organization secrets only when several repositories genuinely share the same credential and access can be restricted to an explicit repository set.
+3. Organization secrets only when multiple repositories truly share the same credential, restricted to an explicit repository set.
 
-Never place production credentials in source, Issue text, PR text, review output, logs, or agent instructions.
+Never place production credentials in source, Issues, PR text, AI review output, workflow logs, or agent instructions.
 
-## Branch / ruleset target
+## 8. Automation permissions
 
-For environment branches:
+Automation must receive the minimum required GitHub permissions.
 
-- prevent force push and deletion;
-- require PR-based promotion where practical;
-- require relevant checks before promotion;
-- use stricter review / deployment controls as code moves toward `prod`;
-- do not let a feature branch deploy production.
+Examples:
 
-Repository-local exceptions must document why the same safety property is preserved another way.
+- CI: contents read;
+- Issue intake: issue/project write only where required;
+- review publisher: PR/Issue comment write but no code write;
+- deployment: contents read plus environment/repository secrets, not Organization Owner authority.
+
+Provider credentials for AI review must be isolated from PR-controlled code.
