@@ -40,3 +40,7 @@ Blocked, paused, stale, or difficult does not automatically mean `not_planned`.
 Reopening requires explicit authority. Default Project position is `Todo`; use `In Progress` only when the same instruction also authorizes resumed execution.
 
 Reopen alone does not authorize implementation.
+
+## Settlement verification
+
+After an authorized closure or reopen, verify the recorded Issue outcome and, when Project access is available, verify the Organization Project `#1` projection matches the native lifecycle contract: closed Issues are `Done`; reopened Issues are `Todo` unless the same authority also resumed execution. Do not treat a successful mutation response or a green synchronization workflow as proof of a correct ledger projection. Report any projection gap explicitly.
