@@ -30,6 +30,39 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      EXPECTED_BASE_SHA: ${{ inputs.base_sha }}
+      EXPECTED_HEAD_SHA: ${{ inputs.head_sha }}
+      REVIEW_ENDPOINT: ${{ inputs.endpoint }}
+      REVIEW_MODEL: ${{ inputs.model }}
+      REVIEW_API_KEY: ${{ secrets.api_key }}
+      REVIEW_MARKER: '<!-- sanchuang-ai-review:v1 -->'
+
     steps:
-      - name: Validate reusable workflow
-        run: echo "workflow syntax is valid"
+      - name: Validate immutable review identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$REVIEW_ENDPOINT" in
+            https://*) ;;
+            *)
+              echo "::error::AI review endpoint must use HTTPS."
+              exit 1
+              ;;
+          esac
+
+          test -n "${REVIEW_API_KEY:-}"
+
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          base_sha="$(jq -r '.base.sha' <<<"$pr_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          state="$(jq -r '.state' <<<"$pr_json")"
+
+          test "$state" = "open"
+          test "$base_sha" = "$EXPECTED_BASE_SHA"
+          test "$head_sha" = "$EXPECTED_HEAD_SHA"
+
