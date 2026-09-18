@@ -26,7 +26,7 @@ Issue truth and Issue mutation authority are separate: observable completion doe
 
 ## 3. GitHub Project — management projection
 
-`Sanchuang Development` uses native Project `Status` only for coarse lifecycle position:
+Organization Project `#1` uses GitHub's native Project `Status` only for coarse lifecycle position:
 
 ```text
 Todo | In Progress | Done
