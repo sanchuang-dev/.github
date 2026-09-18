@@ -6,7 +6,7 @@ Sanchuang engineering work uses one GitHub Issue contract and one native Project
 
 ## 1. One lifecycle field
 
-`Sanchuang Development` uses native Project `Status`:
+Organization Project `#1` uses GitHub's native Project `Status`:
 
 ```text
 Todo -> In Progress -> Done
@@ -58,7 +58,7 @@ Creating a work item means creating the Issue contract in the repository that ow
 
 Issue creation requires explicit creation authority. Discussion, review findings, audit findings, or TODO discovery do not authorize autonomous Issue creation.
 
-Organization intake should add open Issues to `Sanchuang Development`. Newly added work should begin at `Todo`.
+Organization intake should add open Issues to Organization Project `#1`. Newly added work should begin at `Todo`.
 
 Creating an Issue does not itself authorize implementation.
 
