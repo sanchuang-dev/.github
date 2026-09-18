@@ -1,6 +1,6 @@
 # AI Review Gateway
 
-Status: Organization contract established; execution backend may be wired independently.
+Status: Organization contract established. An OpenAI-compatible GitHub Actions backend is implemented; repository activation remains opt-in.
 
 The Sanchuang AI Review Gateway is a provider-independent review pipeline. It exists so review semantics do not belong to one model vendor or GitHub App.
 
@@ -53,3 +53,29 @@ Historical stale reviews may remain visible but must be marked stale by identity
 The governance repository owns this contract. A concrete gateway service or reusable workflow may live elsewhere as long as it consumes the current Organization policy and produces the normalized output contract.
 
 Do not claim that automated AI Review is active until an actual trigger, provider credential, runtime, publisher, and stale-detection path have been verified end to end.
+
+
+## Implemented backend
+
+The reusable workflow:
+
+```text
+.github/workflows/ai-review-openai-compatible.yml
+```
+
+implements the first Organization-controlled execution backend.
+
+It:
+
+- binds review to exact PR/base/head identity;
+- reads repository instructions and review profile from the trusted base SHA;
+- retrieves the PR diff through GitHub APIs without executing PR-controlled code;
+- calls an OpenAI-compatible HTTPS endpoint using a repository secret;
+- validates the normalized Organization verdict/findings contract;
+- updates one current PR review comment identified by the Organization marker.
+
+Repository activation should use a trusted base-branch caller such as `pull_request_target` and must never checkout or execute the PR head while provider credentials are present.
+
+This backend is provider-independent at the Organization-contract layer. The configured endpoint/model remain execution choices and may point at a company-controlled gateway.
+
+Do not mark a repository as AI Review enabled until its reusable-workflow access, endpoint/model configuration, secret, and one real PR run have been verified.
