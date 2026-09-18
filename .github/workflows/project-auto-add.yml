@@ -35,7 +35,10 @@ jobs:
             exit 0
           fi
 
-          gh project view "$PROJECT_NUMBER"             --owner "$ORG"             --format json             --jq '.id' >/dev/null
+          gh project view "$PROJECT_NUMBER" \
+            --owner "$ORG" \
+            --format json \
+            --jq '.id' >/dev/null
 
       - name: Add open Organization Issues
         shell: bash
@@ -49,9 +52,32 @@ jobs:
           issues_file="$(mktemp)"
           project_file="$(mktemp)"
 
-          gh api --paginate             -H 'Accept: application/vnd.github+json'             -H "X-GitHub-Api-Version: ${API_VERSION}"             "/search/issues?q=org%3A${ORG}+is%3Aissue+is%3Aopen&per_page=100"             --jq '.items[].html_url'             | sort -u > "$issues_file"
+          : > "$issues_file"
 
-          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --format json             --jq '.items[].content.url // empty'             | sort -u > "$project_file"
+          while IFS= read -r repository; do
+            [ -n "${repository:-}" ] || continue
+
+            gh issue list \
+              --repo "$repository" \
+              --state open \
+              --limit 1000 \
+              --json url \
+              --jq '.[].url' >> "$issues_file"
+          done < <(
+            gh repo list "$ORG" \
+              --limit 1000 \
+              --json nameWithOwner \
+              --jq '.[].nameWithOwner'
+          )
+
+          sort -u -o "$issues_file" "$issues_file"
+
+          gh project item-list "$PROJECT_NUMBER" \
+            --owner "$ORG" \
+            --limit 1000 \
+            --format json \
+            --jq '.items[].content.url // empty' \
+            | sort -u > "$project_file"
 
           added=0
           existing=0
@@ -66,7 +92,10 @@ jobs:
             fi
 
             echo "Adding $issue_url to Organization Project #1"
-            if gh project item-add "$PROJECT_NUMBER"               --owner "$ORG"               --url "$issue_url" >/dev/null; then
+
+            if gh project item-add "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --url "$issue_url" >/dev/null; then
               added=$((added + 1))
             else
               echo "::error::Failed to add $issue_url"
@@ -86,16 +115,39 @@ jobs:
             exit 0
           fi
 
-          project_id="$(gh project view "$PROJECT_NUMBER" --owner "$ORG" --format json --jq '.id')"
-          fields_json="$(gh project field-list "$PROJECT_NUMBER" --owner "$ORG" --format json)"
-          status_field_id="$(jq -r '.fields[] | select(.name == "Status") | .id' <<<"$fields_json" | head -n 1)"
-          todo_option_id="$(jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id' <<<"$fields_json" | head -n 1)"
+          project_id="$(
+            gh project view "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --format json \
+              --jq '.id'
+          )"
+
+          fields_json="$(
+            gh project field-list "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --format json
+          )"
+
+          status_field_id="$(
+            jq -r '.fields[] | select(.name == "Status") | .id' \
+              <<<"$fields_json" | head -n 1
+          )"
+
+          todo_option_id="$(
+            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id' \
+              <<<"$fields_json" | head -n 1
+          )"
 
           [ -n "$project_id" ] && [ "$project_id" != "null" ]
           [ -n "$status_field_id" ] && [ "$status_field_id" != "null" ]
           [ -n "$todo_option_id" ] && [ "$todo_option_id" != "null" ]
 
-          items_json="$(gh project item-list "$PROJECT_NUMBER" --owner "$ORG" --limit 1000 --format json)"
+          items_json="$(
+            gh project item-list "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --limit 1000 \
+              --format json
+          )"
 
           jq -r '
             .items[]
@@ -103,7 +155,8 @@ jobs:
             | select(.content.url != null)
             | [.id, .content.url]
             | @tsv
-          ' <<<"$items_json" | while IFS=$'\t' read -r item_id issue_url; do
+          ' <<<"$items_json" |
+          while IFS=$'\t' read -r item_id issue_url; do
             [ -n "${item_id:-}" ] || continue
             [ -n "${issue_url:-}" ] || continue
 
@@ -116,10 +169,20 @@ jobs:
             [ "$issue_owner" = "$ORG" ] || continue
             [[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 
-            state_reason="$(gh api               -H 'Accept: application/vnd.github+json'               -H "X-GitHub-Api-Version: ${API_VERSION}"               "/repos/${issue_owner}/${issue_repo}/issues/${issue_number}"               --jq '.state_reason // ""')"
+            state_reason="$(
+              gh issue view "$issue_number" \
+                --repo "${issue_owner}/${issue_repo}" \
+                --json stateReason \
+                --jq '.stateReason // ""'
+            )"
 
-            [ "$state_reason" = "reopened" ] || continue
+            [ "$state_reason" = "REOPENED" ] || [ "$state_reason" = "reopened" ] || continue
 
             echo "Repairing reopened $issue_url from Done to Todo"
-            gh project item-edit               --id "$item_id"               --project-id "$project_id"               --field-id "$status_field_id"               --single-select-option-id "$todo_option_id" >/dev/null
+
+            gh project item-edit \
+              --id "$item_id" \
+              --project-id "$project_id" \
+              --field-id "$status_field_id" \
+              --single-select-option-id "$todo_option_id" >/dev/null
           done
