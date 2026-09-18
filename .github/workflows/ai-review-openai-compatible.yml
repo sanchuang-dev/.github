@@ -147,7 +147,16 @@ A review is advisory only and is never product acceptance, merge authorization, 
               ]
             }' > "$work/request.json"
 
-          curl             --fail-with-body             --silent             --show-error             --retry 2             --connect-timeout 15             --max-time 150             -H 'Content-Type: application/json'             -H 'Accept: application/json'             -H "Authorization: Bearer $REVIEW_API_KEY"             --data-binary "@$work/request.json"             "$REVIEW_ENDPOINT"             > "$work/response.json"
+          review_url="${REVIEW_ENDPOINT%/}"
+          case "$review_url" in
+            */chat/completions)
+              ;;
+            */v1)
+              review_url="$review_url/chat/completions"
+              ;;
+          esac
+
+          curl             --fail-with-body             --silent             --show-error             --retry 2             --connect-timeout 15             --max-time 150             -H 'Content-Type: application/json'             -H 'Accept: application/json'             -H "Authorization: Bearer $REVIEW_API_KEY"             --data-binary "@$work/request.json"             "$review_url"             > "$work/response.json"
 
           jq -er '.choices[0].message.content' "$work/response.json" > "$work/model-content.txt"
 
