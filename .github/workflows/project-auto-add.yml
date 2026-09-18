@@ -23,7 +23,6 @@ jobs:
       GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
       ORG: sanchuang-dev
       PROJECT_NUMBER: '1'
-      API_VERSION: '2026-03-10'
 
     steps:
       - name: Validate Project access
