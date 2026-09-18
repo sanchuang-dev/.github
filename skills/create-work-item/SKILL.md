@@ -63,10 +63,10 @@ Do not use a milestone shell as a disguised implementation task.
 6. choose `Implementation slice` or `Milestone shell`;
 7. write one coherent Issue contract;
 8. create the Issue in the owning repository;
-9. verify that Organization Project intake projects the Issue into Project `#1` when Project access is available;
+9. verify that Organization Project intake projects the Issue into Project `#1` when Project access is available; for a newly created open Issue that has not started implementation, verify the native Project Status is `Todo` rather than blank or a text-only pseudo-state;
 10. if the same instruction authorizes implementation, start only from an implementation slice and verify the implementation base before substantive work.
 
-Do not assume Project intake succeeded merely because an Actions workflow is green. Verify the Issue is actually present in Project `#1`, or report the projection gap.
+Do not assume Project intake succeeded merely because an Actions workflow is green. Verify the Issue is actually present in Project `#1` with a valid native lifecycle status (`Todo`, or `In Progress` once execution has actually begun), or report the projection gap. A blank Project Status is an invalid projection, not a successful intake.
 
 ## Issue contract
 
