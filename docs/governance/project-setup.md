@@ -1,39 +1,28 @@
-# Sanchuang Development Project Setup
+# Organization Project Setup
 
-Status: target Project contract. The repository workflow is already staged and becomes active when the Project number and credential are configured.
+Status: active Organization Project contract.
 
-## Project
+## Canonical Project
 
-Create one Organization Project:
+Organization Project `#1` is the canonical management board for `sanchuang-dev`.
 
-```text
-Sanchuang Development
-```
+The stable identity is the Project number, not its display name.
 
-Recommended visibility: private.
+## Status
 
-## Native Status
-
-Keep exactly three lifecycle values:
+Use GitHub's native/default `Status` field as the only lifecycle field.
 
 ```text
-Todo
-In Progress
-Done
+Todo -> In Progress -> Done
 ```
 
-Do not add Blocked, Review, Verification, Ready to Ship, dev, test, or prod as lifecycle columns. Those concepts belong elsewhere.
+Do not add a second lifecycle in labels, Issue prose, environment branches, or duplicate custom fields.
 
-## Planning fields
+Keep the default Status setup unless a concrete workflow need appears.
 
-Recommended fields:
+## Optional fields
 
-- Priority: Urgent / High / Normal / Low
-- Effort: S / M / L / XL
-- Start date
-- Target date
-
-These fields are planning metadata, not Issue acceptance criteria.
+Additional fields such as Priority, Effort, Start date, or Target date are optional. Do not add them merely for ceremony.
 
 ## Semantics
 
@@ -42,39 +31,22 @@ These fields are planning metadata, not Issue acceptance criteria.
 - closed Issue -> Done
 - blocked but actively owned -> remain In Progress
 - deliberately paused/dequeued -> Todo
-- reopened Issue left at Done -> Organization automation repairs to Todo
+- reopened Issue left at Done -> automation may repair it to Todo
 
 The Issue close reason carries whether Done means completed, not planned, or duplicate.
 
 ## Automatic intake
 
-The workflow at:
+`.github/workflows/project-auto-add.yml` is bound directly to Organization Project `#1`.
 
-```text
-.github/workflows/project-auto-add.yml
-```
+It periodically adds open Issues from `sanchuang-dev` that are not yet present in the Project.
 
-runs every five minutes and adds open Issues from `sanchuang-dev` that are not yet in the Project.
+The Project number is committed in the workflow; no Project-number repository variable is required.
 
-It is currently safe to commit before the Project exists: when required configuration is missing, the workflow exits successfully without mutation.
+To activate Project mutation, configure the repository secret `ORG_GITHUB_TOKEN` on `sanchuang-dev/.github` with access to the Organization Project and Organization Issues.
 
-To activate it, configure on `sanchuang-dev/.github`:
+If that credential is absent, the workflow exits safely without Project mutation.
 
-- repository variable `SANCHUANG_PROJECT_NUMBER` = the Organization Project number;
-- repository secret `ORG_GITHUB_TOKEN` = a credential with permission to read/write the Organization Project and read Organization Issues.
+## Boundary
 
-The credential must not be exposed to PR-controlled code.
-
-## Project automation boundary
-
-Project automation owns management projection only.
-
-It must not infer:
-
-- implementation authority;
-- acceptance authority;
-- release authority;
-- production readiness;
-- Issue closure.
-
-Those decisions remain governed by the Issue contract, Organization policy, repository policy, and explicit maintainer authority.
+Project automation owns management projection only. It must not infer implementation authority, acceptance authority, release authority, production readiness, or Issue closure.
