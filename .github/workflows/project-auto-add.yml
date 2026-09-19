@@ -20,7 +20,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.SC_ORG_GITHUB_TOKEN }}
       ORG: sanchuang-dev
       PROJECT_NUMBER: '1'
 
@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::Project #1 intake is inactive because ORG_GITHUB_TOKEN is not configured."
+            echo "::error::Project #1 intake is inactive because SC_ORG_GITHUB_TOKEN is not configured."
             exit 1
           fi
 
@@ -42,7 +42,7 @@ jobs:
 
           repo_count="$(wc -l < "$repos_file" | tr -d ' ')"
           if [ "$repo_count" -eq 0 ]; then
-            echo "::error::ORG_GITHUB_TOKEN cannot see any repositories in $ORG."
+            echo "::error::SC_ORG_GITHUB_TOKEN cannot see any repositories in $ORG."
             exit 1
           fi
 
@@ -51,7 +51,7 @@ jobs:
           )"
 
           if [[ "$expected_count" =~ ^[0-9]+$ ]]             && [ "$expected_count" -gt 0 ]             && [ "$repo_count" -lt "$expected_count" ]; then
-            echo "::error::ORG_GITHUB_TOKEN sees only $repo_count of $expected_count organization repositories. Grant the token all-repository access before trusting Project intake."
+            echo "::error::SC_ORG_GITHUB_TOKEN sees only $repo_count of $expected_count organization repositories. Grant the token all-repository access before trusting Project intake."
             exit 1
           fi
 
