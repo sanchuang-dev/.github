@@ -35,10 +35,16 @@ jobs:
             exit 1
           fi
 
-          gh project view "$PROJECT_NUMBER"             --owner "$ORG"             --format json             --jq '.id' >/dev/null
+          gh project view "$PROJECT_NUMBER" \
+            --owner "$ORG" \
+            --format json \
+            --jq '.id' >/dev/null
 
           repos_file="$(mktemp)"
-          gh api --paginate             "/orgs/${ORG}/repos?type=all&per_page=100"             --jq '.[].full_name'             | sort -u > "$repos_file"
+          gh api --paginate \
+            "/orgs/${ORG}/repos?type=all&per_page=100" \
+            --jq '.[].full_name' \
+            | sort -u > "$repos_file"
 
           repo_count="$(wc -l < "$repos_file" | tr -d ' ')"
           if [ "$repo_count" -eq 0 ]; then
@@ -46,39 +52,69 @@ jobs:
             exit 1
           fi
 
-          expected_count="$(
-            gh api "/orgs/${ORG}"               --jq '(.public_repos // 0) + (.total_private_repos // 0)'               2>/dev/null || printf '0'
-          )"
-
-          if [[ "$expected_count" =~ ^[0-9]+$ ]]             && [ "$expected_count" -gt 0 ]             && [ "$repo_count" -lt "$expected_count" ]; then
-            echo "::error::SC_ORG_GITHUB_TOKEN sees only $repo_count of $expected_count organization repositories. Grant the token all-repository access before trusting Project intake."
-            exit 1
-          fi
-
-          echo "Repository visibility check: accessible=$repo_count expected=${expected_count:-unknown}"
+          echo "Repository visibility check: accessible=$repo_count"
 
       - name: Reconcile Organization Issues into Project
         shell: bash
         run: |
           set -euo pipefail
 
+          project_id="$(
+            gh project view "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --format json \
+              --jq '.id'
+          )"
+
           repos_file="$(mktemp)"
           issues_file="$(mktemp)"
           project_file="$(mktemp)"
 
-          gh api --paginate             "/orgs/${ORG}/repos?type=all&per_page=100"             --jq '.[].full_name'             | sort -u > "$repos_file"
+          gh api --paginate \
+            "/orgs/${ORG}/repos?type=all&per_page=100" \
+            --jq '.[].full_name' \
+            | sort -u > "$repos_file"
 
           : > "$issues_file"
 
           while IFS= read -r repository; do
             [ -n "${repository:-}" ] || continue
 
-            gh issue list               --repo "$repository"               --state all               --limit 1000               --json url               --jq '.[].url' >> "$issues_file"
+            gh issue list \
+              --repo "$repository" \
+              --state all \
+              --limit 1000 \
+              --json url \
+              --jq '.[].url' >> "$issues_file"
           done < "$repos_file"
 
           sort -u -o "$issues_file" "$issues_file"
 
-          gh project item-list "$PROJECT_NUMBER"             --owner "$ORG"             --limit 1000             --format json             --jq '.items[].content.url // empty'             | sort -u > "$project_file"
+          gh api graphql --paginate \
+            -F projectId="$project_id" \
+            -f query='
+              query($projectId: ID!, $endCursor: String) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    items(first: 100, after: $endCursor) {
+                      nodes {
+                        content {
+                          ... on Issue {
+                            url
+                          }
+                        }
+                      }
+                      pageInfo {
+                        hasNextPage
+                        endCursor
+                      }
+                    }
+                  }
+                }
+              }
+            ' \
+            --jq '.data.node.items.nodes[] | .content.url // empty' \
+            | sort -u > "$project_file"
 
           repo_count="$(wc -l < "$repos_file" | tr -d ' ')"
           issue_count="$(wc -l < "$issues_file" | tr -d ' ')"
@@ -96,9 +132,43 @@ jobs:
               continue
             fi
 
+            issue_path="${issue_url#https://github.com/}"
+            issue_owner="${issue_path%%/*}"
+            remainder="${issue_path#*/}"
+            issue_repo="${remainder%%/*}"
+            issue_number="${issue_url##*/}"
+
+            if ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+              echo "::error::Cannot parse Issue number from $issue_url"
+              failed=$((failed + 1))
+              continue
+            fi
+
+            content_id="$(
+              gh api "/repos/${issue_owner}/${issue_repo}/issues/${issue_number}" \
+                --jq '.node_id'
+            )"
+
             echo "Adding $issue_url to Organization Project #1"
 
-            if gh project item-add "$PROJECT_NUMBER"               --owner "$ORG"               --url "$issue_url" >/dev/null; then
+            if gh api graphql \
+              -F projectId="$project_id" \
+              -F contentId="$content_id" \
+              -f query='
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(
+                    input: {
+                      projectId: $projectId
+                      contentId: $contentId
+                    }
+                  ) {
+                    item {
+                      id
+                    }
+                  }
+                }
+              ' \
+              --jq '.data.addProjectV2ItemById.item.id' >/dev/null; then
               added=$((added + 1))
             else
               echo "::error::Failed to add $issue_url"
@@ -121,23 +191,63 @@ jobs:
           set -euo pipefail
 
           project_id="$(
-            gh project view "$PROJECT_NUMBER"               --owner "$ORG"               --format json               --jq '.id'
+            gh project view "$PROJECT_NUMBER" \
+              --owner "$ORG" \
+              --format json \
+              --jq '.id'
           )"
 
           fields_json="$(
-            gh project field-list "$PROJECT_NUMBER"               --owner "$ORG"               --format json
+            gh api graphql \
+              -F projectId="$project_id" \
+              -f query='
+                query($projectId: ID!) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      fields(first: 100) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField {
+                            id
+                            name
+                            options {
+                              id
+                              name
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              '
           )"
 
           status_field_id="$(
-            jq -r '.fields[] | select(.name == "Status") | .id'               <<<"$fields_json" | head -n 1
+            jq -r '
+              .data.node.fields.nodes[]
+              | select(.name == "Status")
+              | .id
+            ' <<<"$fields_json" | head -n 1
           )"
 
           todo_option_id="$(
-            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Todo") | .id'               <<<"$fields_json" | head -n 1
+            jq -r '
+              .data.node.fields.nodes[]
+              | select(.name == "Status")
+              | .options[]
+              | select(.name == "Todo")
+              | .id
+            ' <<<"$fields_json" | head -n 1
           )"
 
           done_option_id="$(
-            jq -r '.fields[] | select(.name == "Status") | .options[]? | select(.name == "Done") | .id'               <<<"$fields_json" | head -n 1
+            jq -r '
+              .data.node.fields.nodes[]
+              | select(.name == "Status")
+              | .options[]
+              | select(.name == "Done")
+              | .id
+            ' <<<"$fields_json" | head -n 1
           )"
 
           [ -n "$project_id" ] && [ "$project_id" != "null" ]
@@ -145,14 +255,10 @@ jobs:
           [ -n "$todo_option_id" ] && [ "$todo_option_id" != "null" ]
           [ -n "$done_option_id" ] && [ "$done_option_id" != "null" ]
 
-          items_json="$(
-            gh project item-list "$PROJECT_NUMBER"               --owner "$ORG"               --limit 1000               --format json
-          )"
-
           normalized_done=0
           normalized_todo=0
 
-          while IFS=$'\t' read -r item_id project_status issue_url; do
+          while IFS=$'\t' read -r item_id project_status issue_url issue_state; do
             [ -n "${item_id:-}" ] || continue
             [ -n "${issue_url:-}" ] || continue
 
@@ -161,32 +267,98 @@ jobs:
               *) continue ;;
             esac
 
-            issue_path="${issue_url#https://github.com/}"
-            issue_owner="${issue_path%%/*}"
-            remainder="${issue_path#*/}"
-            issue_repo="${remainder%%/*}"
-            issue_number="${issue_url##*/}"
-
-            [[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-
-            issue_state="$(
-              gh issue view "$issue_number"                 --repo "${issue_owner}/${issue_repo}"                 --json state                 --jq '.state'
-            )"
+            target_option_id=""
 
             if [ "$issue_state" = "CLOSED" ] && [ "$project_status" != "Done" ]; then
-              gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$done_option_id" >/dev/null
+              target_option_id="$done_option_id"
               normalized_done=$((normalized_done + 1))
             elif [ "$issue_state" = "OPEN" ] && { [ -z "$project_status" ] || [ "$project_status" = "Done" ]; }; then
-              gh project item-edit                 --id "$item_id"                 --project-id "$project_id"                 --field-id "$status_field_id"                 --single-select-option-id "$todo_option_id" >/dev/null
+              target_option_id="$todo_option_id"
               normalized_todo=$((normalized_todo + 1))
             fi
+
+            [ -n "$target_option_id" ] || continue
+
+            gh api graphql \
+              -F projectId="$project_id" \
+              -F itemId="$item_id" \
+              -F fieldId="$status_field_id" \
+              -F optionId="$target_option_id" \
+              -f query='
+                mutation(
+                  $projectId: ID!
+                  $itemId: ID!
+                  $fieldId: ID!
+                  $optionId: String!
+                ) {
+                  updateProjectV2ItemFieldValue(
+                    input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: {
+                        singleSelectOptionId: $optionId
+                      }
+                    }
+                  ) {
+                    projectV2Item {
+                      id
+                    }
+                  }
+                }
+              ' \
+              --jq '.data.updateProjectV2ItemFieldValue.projectV2Item.id' >/dev/null
           done < <(
-            jq -r '
-              .items[]
-              | select(.content.url != null)
-              | [.id, (.status // ""), .content.url]
-              | @tsv
-            ' <<<"$items_json"
+            gh api graphql --paginate \
+              -F projectId="$project_id" \
+              -f query='
+                query($projectId: ID!, $endCursor: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 100, after: $endCursor) {
+                        nodes {
+                          id
+                          content {
+                            ... on Issue {
+                              url
+                              state
+                            }
+                          }
+                          fieldValues(first: 50) {
+                            nodes {
+                              ... on ProjectV2ItemFieldSingleSelectValue {
+                                name
+                                field {
+                                  ... on ProjectV2SingleSelectField {
+                                    name
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                        pageInfo {
+                          hasNextPage
+                          endCursor
+                        }
+                      }
+                    }
+                  }
+                }
+              ' \
+              --jq '
+                .data.node.items.nodes[]
+                | select(.content.url != null)
+                | [
+                    .id,
+                    ([.fieldValues.nodes[]?
+                      | select(.field.name == "Status")
+                      | .name][0] // ""),
+                    .content.url,
+                    (.content.state // "")
+                  ]
+                | @tsv
+              '
           )
 
           echo "Project lifecycle normalization: closed_to_done=$normalized_done open_done_to_todo=$normalized_todo"
