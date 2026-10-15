@@ -114,6 +114,7 @@ A higher-priority instruction may change the requested outcome, but it cannot ma
 | Repository / team permissions and production authority | [docs/governance/permissions-model.md](docs/governance/permissions-model.md) |
 | Branch / environment promotion | [docs/engineering/environment-model.md](docs/engineering/environment-model.md) |
 | Testing and evidence | [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md) |
+| Execute an explicitly authorized work item with OpenCode Worker | [skills/execute-work-item/SKILL.md](skills/execute-work-item/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
 | Organization AI PR Review | [ai-review/POLICY.md](ai-review/POLICY.md) and [ai-review/OUTPUT-CONTRACT.md](ai-review/OUTPUT-CONTRACT.md) |
 | AI Review execution architecture | [ai-review/GATEWAY.md](ai-review/GATEWAY.md) |
 
