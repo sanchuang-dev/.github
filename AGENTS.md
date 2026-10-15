@@ -1,6 +1,6 @@
 # Sanchuang Development Organization AI Instructions
 
-Policy revision: `2026-09-18.2`
+Policy revision: `2026-10-16.1`
 Constitution: `v1.0`
 
 This file is the canonical AI collaboration entry for repositories owned by the `sanchuang-dev` GitHub Organization.
