@@ -28,15 +28,15 @@ Natural-language trigger phrases are **instructions to the dispatcher AI**, not 
 ## Default free route
 
 - Organization: `sanchuang-dev`.
-- Private reusable engine: `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
+- Organization reusable engine (after Organization `.github` visibility is changed to public): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
 - Default official native model: `mimo-v2.6-flash-free`.
 - Alternative official native model: `deepseek-v4.1-flash-free` (explicit selection only; no automatic fallback).
 - Runtime: official OpenCode CLI V2, with one pinned Organization `execute-work-item` Skill.
 - Delivery: an isolated `feat/worker-*` branch, verified and returned as **Draft PR** to the caller-defined engineering base.
 
-For private repositories, the chosen caller must pin an immutable SHA of the Organization reusable workflow; the private Organization workflow must be shared to eligible private repositories in Actions settings. A repository-scoped **read-only** policy credential is required because `sanchuang-dev/.github` is private. **No model-provider API key** is required for the V2 native free route.
+For public or private application repositories, once `sanchuang-dev/.github` is made **public**, the caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. Until visibility has actually changed, the new V2 workflow is not activated: never bypass that prerequisite by providing broad tokens.
 
-Public repositories **cannot** directly invoke this private reusable workflow. Use a separately reviewed, provenance-tracked local implementation only when that repository has explicitly opted in. Do not copy Organization policy into a public project.
+Public repositories can invoke the public reusable workflow after visibility change, via a reviewed opt-in caller on their default branch. Until that point, preserve legacy managed local Workflows; do not switch callers preemptively. Do not copy the Organization constitution into a public project.
 
 ## Dispatch with an authorized GitHub CLI
 
