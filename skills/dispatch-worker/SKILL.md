@@ -28,15 +28,15 @@ Natural-language trigger phrases are **instructions to the dispatcher AI**, not 
 ## Default free route
 
 - Organization: `sanchuang-dev`.
-- Organization reusable engine (after Organization `.github` visibility is changed to public): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
+- Organization reusable engine (the `.github` repository is now Public; the V2 PR and target caller must still be merged): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
 - Default official native model: `mimo-v2.6-flash-free`.
 - Alternative official native model: `deepseek-v4.1-flash-free` (explicit selection only; no automatic fallback).
 - Runtime: official OpenCode CLI V2, with one pinned Organization `execute-work-item` Skill.
 - Delivery: an isolated `feat/worker-*` branch, verified and returned as **Draft PR** to the caller-defined engineering base.
 
-For public or private application repositories, once `sanchuang-dev/.github` is made **public**, the caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. Until visibility has actually changed, the new V2 workflow is not activated: never bypass that prerequisite by providing broad tokens.
+For public or private application repositories, now that `sanchuang-dev/.github` is **public**, each caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. The V2 workflow remains unavailable until the Organization PR is merged and the target repository has a reviewed, enabled default-branch caller.
 
-Public repositories can invoke the public reusable workflow after visibility change, via a reviewed opt-in caller on their default branch. Until that point, preserve legacy managed local Workflows; do not switch callers preemptively. Do not copy the Organization constitution into a public project.
+Public repositories can invoke the public reusable workflow via a reviewed opt-in caller on their default branch. Until a target's own caller is merged and smoke-tested, preserve its existing workflow; do not switch callers preemptively. Do not copy the Organization constitution into a public project.
 
 ## Dispatch with an authorized GitHub CLI
 
