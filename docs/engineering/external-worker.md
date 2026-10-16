@@ -1,23 +1,24 @@
 # Sanchuang External Worker
 
 Owner: `sanchuang-dev/.github`. Execution contract: [Execute Work Item](../../skills/execute-work-item/SKILL.md).
-Reference implementation: Mira's reusable External Worker, adapted to Sanchuang's governance and permission model. **Visibility transition:** this Organization repository is private at the time of this draft. The new V2 route below requires it to become public before enabling any caller; legacy v1 remains as-is.
+Reference implementation: Mira's reusable External Worker, adapted to Sanchuang's governance and permission model. **Current visibility:** the Organization repository is Public, confirmed with unauthenticated GitHub API/AGENTS.md access on 2026-10-16. Legacy V1 remains untouched.
 
 ## V2 native free Worker (separate, keyless model route)
 
-The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers **after** `sanchuang-dev/.github` is made public. Until that visibility change, treat V2 as NOT READY to dispatch; do not work around the missing public policy by adding a broad private token. The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
+The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers now that `sanchuang-dev/.github` is public. It still requires this Organization PR to be merged and a separately reviewed, SHA-pinned repository caller before use. The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
 
 - Uses pinned official OpenCode CLI `2.0.24` via `https://opencode.ai/v2/install`.
 - Default `opencode/mimo-v2.6-flash-free`; explicit alternate `opencode/deepseek-v4.1-flash-free`; allowlist checked against official model catalog before invocation. Provider availability is **not guaranteed**, and a catalog entry is not proof of a successful inference. No paid fallback or custom endpoint/header impersonation.
-- Loads canonical `AGENTS.md` and `skills/execute-work-item/SKILL.md` from the **same resolved Organization main commit** using the caller-scoped `github.token` only in a trusted policy-loading step, after the Organization repository is public. OpenCode does not receive this token. No cross-repository policy PAT or API key is required. Mirrors that Skill to the V2 native global directory and verifies bytes.
+- Loads canonical `AGENTS.md` and `skills/execute-work-item/SKILL.md` from the **same resolved Organization main commit** using the caller-scoped `github.token` only in a trusted policy-loading step, now that the Organization repository is public. OpenCode does not receive this token. No cross-repository policy PAT or API key is required. Mirrors that Skill to the V2 native global directory and verifies bytes.
 - Denies all other native Skill IDs and fails closed when project OpenCode config/Skill sources or a same-name Skill could shadow the pinned Organization contract.
 - Keeps original per-Issue authorization, verified maintainer comment amendments, isolated worker branch, trusted repository-owned verification, Draft PR only, and bounded diagnostic evidence. The model is not granted Issue-close, merge or release authority.
+- **Token isolation:** model execution, repository builds, verification and patch packaging occur in a dedicated Runner Job with only read-level GitHub permissions. The separate `delivery` Job runs on a clean Runner with write permissions, treats the verified patch as data, applies it without hooks, creates one commit and a Draft PR. No untrusted repository scripts or model processes run inside the write-token Job. This fixes the Git Hook/write-token exposure path found by Codex on PR #5. An isolated synthetic malicious-Hook regression test verified the original Hook/config was not copied into the delivery Runner and no simulated write token was observed.
 
 An AI dispatcher should load `skills/dispatch-worker/SKILL.md` to recognize maintainer requests, validate the authorization, and use an **already activated target-repository caller**. A phrase such as “让免费牛马做 dr-card-android#123” is a language-level instruction to that dispatcher AI, **not** an automatic GitHub trigger.
 
 ### Required integration for a calling repository (public or private after visibility change)
 
-Once the Organization repository is public, both public and private callers can reference the reviewed and immutable reusable workflow commit. The target repository must install a thin workflow on its **default branch** for `workflow_dispatch`; the implementation base remains its documented `dev` or other trusted branch. A public caller must not expose Organization secrets or copy internal policy. Sample caller:
+Both public and private callers can reference the reviewed and immutable Organization reusable-workflow commit once this PR is merged. The target repository must install a thin workflow on its **default branch** for `workflow_dispatch`; the implementation base remains its documented `dev` or other trusted branch. A public caller must not expose Organization secrets or copy internal policy. Sample caller:
 
 ```yaml
 name: Sanchuang Free Worker
@@ -84,7 +85,7 @@ These prerequisites are intentionally explicit: missing credentials or private w
 
 ## Legacy V1: public repository exception
 
-While the Organization repository was private, public callers such as `dr-card-web` needed a **managed, repository-local workflow copy**. After `sanchuang-dev/.github` becomes public, both public and private callers can invoke the **new V2** workflow by immutable SHA. The V1 managed copy remains in place until its own reviewed opt-in migration PR; it is not auto-replaced by Organization visibility changes.
+While the Organization repository was private, public callers such as `dr-card-web` needed a **managed, repository-local workflow copy**. Now that `sanchuang-dev/.github` is public, both public and private callers may opt in to **new V2** by immutable SHA after its own review/merge. The V1 managed copy remains in place until its own reviewed opt-in migration PR; it is not auto-replaced by Organization visibility changes.
 
 `dr-card-web` is the initial public pilot: the manual dispatch workflow lives on its historical default branch `main` (GitHub UI registration requirement), while its code checkout and Draft PR base remain `dev`. Keep actual H5 product work on `dev`, not `main`. Do not generalize this pilot to `base-prototype`, which has independent client-demo branch rules.
 
