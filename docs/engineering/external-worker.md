@@ -3,6 +3,62 @@
 Owner: `sanchuang-dev/.github`. Execution contract: [Execute Work Item](../../skills/execute-work-item/SKILL.md).
 Reference implementation: Mira's reusable External Worker, adapted to Sanchuang's **private** governance repository and its environment/permission model.
 
+## V2 native free Worker (separate, keyless model route)
+
+The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent Organization-owned implementation for private callers. The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. This V2 route does not require or accept an OpenCode/Zen API key.
+
+- Uses pinned official OpenCode CLI `2.0.24` via `https://opencode.ai/v2/install`.
+- Default `opencode/mimo-v2.6-flash-free`; explicit alternate `opencode/deepseek-v4.1-flash-free`; allowlist checked against official model catalog before invocation. Provider availability is **not guaranteed**, and a catalog entry is not proof of a successful inference. No paid fallback or custom endpoint/header impersonation.
+- Loads canonical `AGENTS.md` and `skills/execute-work-item/SKILL.md` from the **same resolved Organization main commit** using `organization_policy_token` in a trusted policy-loading step. OpenCode does not receive this credential. Mirrors that Skill to the V2 native global directory and verifies bytes.
+- Denies all other native Skill IDs and fails closed when project OpenCode config/Skill sources or a same-name Skill could shadow the pinned Organization contract.
+- Keeps original per-Issue authorization, verified maintainer comment amendments, isolated worker branch, trusted repository-owned verification, Draft PR only, and bounded diagnostic evidence. The model is not granted Issue-close, merge or release authority.
+
+An AI dispatcher should load `skills/dispatch-worker/SKILL.md` to recognize maintainer requests, validate the authorization, and use an **already activated target-repository caller**. A phrase such as “让免费牛马做 dr-card-android#123” is a language-level instruction to that dispatcher AI, **not** an automatic GitHub trigger.
+
+### Required integration for a private calling repository
+
+A private caller may use the Organization V2 workflow only when the Organization's private-workflow sharing settings allow access. The target repository must install a thin workflow on its **default branch** for `workflow_dispatch`; the implementation branch remains its documented `dev` or other trusted engineering base. Sample caller:
+
+```yaml
+name: Sanchuang Free Worker
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+      model:
+        required: true
+        type: choice
+        default: mimo-v2.6-flash-free
+        options:
+          - mimo-v2.6-flash-free
+          - deepseek-v4.1-flash-free
+
+jobs:
+  worker:
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    uses: sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml@<reviewed-40-character-SHA>
+    with:
+      issue_number: ${{ inputs.issue_number }}
+      model: ${{ inputs.model }}
+      base_branch: dev # Replace with repository-specific, verified delivery base.
+      verification_command: |
+        ./gradlew :app:assembleDebug # Example ONLY; use the caller's trusted checks.
+    secrets:
+      organization_policy_token: ${{ secrets.SANCHUANG_ORG_POLICY_READ_TOKEN }}
+```
+
+Do not deploy this example unchanged: verify the repository's current default branch, branch strategy, task-check commands, workflow sharing, and secret access. For **public** `dr-card-web`, private reusable Actions cannot be invoked; its existing local copy remains in force pending a separate, explicit review and opt-in.
+
+### Verification and rollout boundary
+
+In Mira, MiMo V2.6 official free route passed a native text response, file Tool read/write, and native `skill` call in isolated tests (Actions runs 38844470177 / 38844682826). These are **upstream portability evidence only**, not proof that the Sanchuang private reusable workflow, its policy token access, an enrolled caller, or its real Issue-to-Draft-PR path has executed. Sanchuang must run its own low-risk authorized private-repository smoke and keep any blocked prerequisite explicit. Never merge this infrastructure merely to satisfy a smoke test; review/permission and rollout authority remain with the maintainer.
+
+
 ## Route and lifecycle
 
 - The reusable workflow is [`sanchuang-external-worker.yml`](../../.github/workflows/sanchuang-external-worker.yml), invoked explicitly from a repository-local `workflow_dispatch` caller **in a private calling repository**. GitHub does not permit public callers to use reusable workflows stored in private repositories.
