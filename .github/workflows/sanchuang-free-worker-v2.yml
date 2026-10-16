@@ -73,6 +73,22 @@ jobs:
 
           test "${GITHUB_REPOSITORY_OWNER}" = "sanchuang-dev"
 
+          # The local caller may be modified on a dispatch-selected branch.
+          # Enforce this boundary again inside the immutable Organization engine
+          # before any model is installed/run or a later write-token job is eligible.
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test -n "$default_branch"
+          if test "$GITHUB_REF" != "refs/heads/$default_branch"; then
+            echo "::error::Free Worker requires dispatch from the repository default branch." >&2
+            exit 1
+          fi
+          default_sha="$(gh api "repos/${GITHUB_REPOSITORY}/branches/$default_branch" --jq '.commit.sha')"
+          test -n "$default_sha"
+          if test "$GITHUB_SHA" != "$default_sha"; then
+            echo "::error::Dispatch commit is not the current default-branch tip; rerun from the reviewed default branch." >&2
+            exit 1
+          fi
+
           issue_json="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}")"
           test "$(jq -r '.state' <<< "$issue_json")" = "open"
 
