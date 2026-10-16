@@ -549,41 +549,7 @@ jobs:
 
           git diff --check
 
-      - name: Run trusted repository verification
-        id: verify
-        shell: bash
-        env:
-          SANCHUANG_VERIFICATION_COMMAND: ${{ inputs.verification_command }}
-        run: |
-          set -euo pipefail
-          test -n "${SANCHUANG_VERIFICATION_COMMAND}"
-
-          set +e
-          {
-            echo "$ ${SANCHUANG_VERIFICATION_COMMAND}"
-            bash -lc "${SANCHUANG_VERIFICATION_COMMAND}"
-          } 2>&1 | tee "${RUNNER_TEMP}/sanchuang-worker/verification.raw"
-          verification_rc="${PIPESTATUS[0]}"
-          set -e
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import json, os
-          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
-          src = root / "verification.raw"
-          dst = root / "verification.log"
-          limit = 120_000
-          data = src.read_bytes() if src.exists() else b""
-          truncated = len(data) > limit
-          dst.write_bytes(data[:limit] + (b"\n[truncated]\n" if truncated else b""))
-          (root / "verification-meta.json").write_text(
-              json.dumps({"bytes": len(data), "limit_bytes": limit, "truncated": truncated}) + "\n"
-          )
-          PY
-
-          exit "$verification_rc"
-
-      - name: Package verified patch without any write credential
+      - name: Package model output before independent verification
         id: package
         shell: bash
         run: |
@@ -630,7 +596,6 @@ jobs:
           VERSION_OUTCOME: ${{ steps.version.outcome }}
           WORKER_OUTCOME: ${{ steps.worker.outcome }}
           BOUNDED_OUTCOME: ${{ steps.bounded.outcome }}
-          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           PACKAGE_OUTCOME: ${{ steps.package.outcome }}
         run: |
           set -euo pipefail
@@ -662,7 +627,6 @@ jobs:
               ("version", os.getenv("VERSION_OUTCOME")),
               ("worker", os.getenv("WORKER_OUTCOME")),
               ("bounded_change", os.getenv("BOUNDED_OUTCOME")),
-              ("trusted_verification", os.getenv("VERIFY_OUTCOME")),
               ("patch_package", os.getenv("PACKAGE_OUTCOME")),
           ]
           failed = next((name for name, outcome in stages if outcome == "failure"), "")
@@ -699,7 +663,6 @@ jobs:
               "version": os.getenv("VERSION_OUTCOME"),
               "worker": os.getenv("WORKER_OUTCOME"),
               "bounded_change": os.getenv("BOUNDED_OUTCOME"),
-              "trusted_verification": os.getenv("VERIFY_OUTCOME"),
               "patch_package": os.getenv("PACKAGE_OUTCOME"),
           }
 
@@ -734,7 +697,7 @@ jobs:
               "skill_commit": identity.get("skill_commit"),
               "started_at": identity.get("run_started_at"),
               "ended_at": os.getenv("RUN_ENDED_AT"),
-              "terminal_status": "ready_for_delivery" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
+              "terminal_status": "ready_for_verification" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
               "failure_stage": os.getenv("FAILURE_STAGE"),
               "stages": stages,
               "session": session,
@@ -742,7 +705,7 @@ jobs:
               "draft_pr_url": os.getenv("PR_URL") or None,
               "verification": {
                   "command": (os.getenv("VERIFICATION_COMMAND") or "")[:4000],
-                  "outcome": os.getenv("VERIFY_OUTCOME"),
+                  "outcome": "pending_independent_verification",
               },
               "artifact_retention_days": 14,
               "safety": {
@@ -778,10 +741,89 @@ jobs:
           retention-days: 14
 
 
-  delivery:
-    # A separate fresh runner, with no model process or modified Git hooks.
+  verify:
+    # Exact patch is rehydrated and independently checked before any write token exists.
     needs: worker
     if: ${{ needs.worker.result == 'success' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      patch_sha256: ${{ steps.apply.outputs.patch_sha256 }}
+    steps:
+      - name: Checkout frozen base on separate read-only runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact implementation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch
+
+      - name: Apply immutable patch for independent verification
+        id: apply
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          evidence="${RUNNER_TEMP}/sanchuang-verified-patch"
+          patch="$evidence/implementation.patch"
+          test -s "$patch"
+          test -s "$evidence/patch.sha256"
+          hash="$(sha256sum "$patch" | awk '{print $1}')"
+          test "$hash" = "$(cat "$evidence/patch.sha256")"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          echo "patch_sha256=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Run trusted verification against rehydrated patch bytes
+        id: verify
+        shell: bash
+        env:
+          SANCHUANG_VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          test -n "$SANCHUANG_VERIFICATION_COMMAND"
+          log="${RUNNER_TEMP}/sanchuang-verified-patch/verification.raw"
+          set +e
+          {
+            echo "$ $SANCHUANG_VERIFICATION_COMMAND"
+            bash -lc "$SANCHUANG_VERIFICATION_COMMAND"
+          } 2>&1 | tee "$log"
+          verification_rc="${PIPESTATUS[0]}"
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-verified-patch"
+          data = (root / "verification.raw").read_bytes()
+          (root / "verification.log").write_bytes(data[:120_000] + (b"\\n[truncated]\\n" if len(data) > 120_000 else b""))
+          PY
+          test "$(sha256sum "${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          exit "$verification_rc"
+
+      - name: Upload independently verified evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-free-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch/verification.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  delivery:
+    # A separate fresh runner, with no model process or modified Git hooks.
+    needs: [worker, verify]
+    if: ${{ needs.worker.result == 'success' && needs.verify.result == 'success' }}
     permissions:
       contents: write
       issues: read
@@ -810,6 +852,7 @@ jobs:
           EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
           WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
+          EXPECTED_VERIFIED_PATCH_HASH: ${{ needs.verify.outputs.patch_sha256 }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
@@ -819,6 +862,7 @@ jobs:
           test -s "$patch"
           test -s "$delivery/patch.sha256"
           test "$(sha256sum "$patch" | awk '{print $1}')" = "$(cat "$delivery/patch.sha256")"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$EXPECTED_VERIFIED_PATCH_HASH"
           git -c core.hooksPath=/dev/null apply --check --index "$patch"
           git -c core.hooksPath=/dev/null apply --index "$patch"
           git -c core.hooksPath=/dev/null diff --cached --check
@@ -863,7 +907,7 @@ jobs:
           - Model: \`${MODEL_ROUTE}\`
           - Worker harness: OpenCode CLI 2.0.24
           - Organization Skill: \`execute-work-item\`
-          - Trusted verification: PASS in isolated read-only Worker Job
+          - Trusted verification: PASS on exact patch in independent read-only verification Job
           - Verification command: \`${VERIFICATION_COMMAND}\`
           - Evidence: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
