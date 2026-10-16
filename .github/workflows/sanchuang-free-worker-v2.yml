@@ -808,7 +808,11 @@ jobs:
           data = (root / "verification.raw").read_bytes()
           (root / "verification.log").write_bytes(data[:120_000] + (b"\\n[truncated]\\n" if len(data) > 120_000 else b""))
           PY
-          test "$(sha256sum "${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          patch="${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          # Verification must not silently mutate the exact staged source snapshot.
+          git -c core.hooksPath=/dev/null apply --reverse --check --index "$patch"
+          git diff --quiet
           exit "$verification_rc"
 
       - name: Upload independently verified evidence
