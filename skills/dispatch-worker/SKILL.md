@@ -54,7 +54,7 @@ gh workflow run sanchuang-free-worker.yml \
 
 Replace every placeholder with verified values; never execute this example unchanged. Use the user's explicitly chosen allowlisted model where supplied. Do not send a key through a CLI argument, prompt, chat, Issue, or Actions input.
 
-If the available GitHub connector cannot dispatch new runs, but the user has an authorized computer connection with working `gh`, that is an alternative dispatcher path; otherwise report the integration gap without claiming success. Prefer GitHub's official workflow-dispatch API / `gh` over an improvised webhook endpoint.
+If the available GitHub connector cannot dispatch runs, direct the maintainer to the GitHub Actions **Run workflow** UI or report the gap. Do not switch to a remote computer or local `gh` unless the user explicitly authorizes that channel for the current task. Never claim dispatch succeeded without a verified Actions run URL.
 
 ## Verification and handoff
 
