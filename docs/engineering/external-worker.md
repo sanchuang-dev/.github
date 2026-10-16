@@ -55,7 +55,9 @@ Do not deploy this example unchanged: verify the repository's default branch, de
 
 ### Verification and rollout boundary
 
-In Mira, MiMo V2.6 official free route passed a native text response, file Tool read/write, and native `skill` call in isolated tests (Actions runs 38844470177 / 38844682826). These are **upstream portability evidence only**, not proof that Sanchuang's new reusable workflow, public-policy loading, any caller enrollment, or a real Issue-to-Draft-PR run has succeeded. Sanchuang must run its own low-risk authorized private-repository smoke and keep any blocked prerequisite explicit. Never merge this infrastructure merely to satisfy a smoke test; review/permission and rollout authority remain with the maintainer.
+**Organization V2 proven on Sanchuang, 2026-10-16:** DeepSeek Free completed a real Jianqu [Issue #4](https://github.com/sanchuang-dev/ai-mirror/issues/4) → [Actions #38875822060](https://github.com/sanchuang-dev/ai-mirror/actions/runs/38875822060) → [Draft PR #23](https://github.com/sanchuang-dev/ai-mirror/pull/23). The native Skill loaded, isolated Worker changed actual docs, the independent verification runner passed, and the write-isolated delivery runner created the Draft PR. The PR later passed Codex review and was merged under separate authorization. Current tested immutable Organization engine SHA: `0118f124b7bb95d75273f377b69dbab9ca050750`.
+
+In Mira, MiMo V2.6 Free passed earlier upstream native Skill and file-tool smoke runs, but **MiMo has not yet passed equivalent Sanchuang Issue-to-Draft-PR E2E**. Do not claim that free-model catalog existence guarantees inference availability. Other Sanchuang repositories remain un-enrolled until their own callers are reviewed and tested. Use the [standard onboarding document](./free-worker-onboarding.md), not the limited Jianqu F01 caller.
 
 
 ## Route and lifecycle
