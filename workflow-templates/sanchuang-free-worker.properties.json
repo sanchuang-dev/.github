@@ -1,0 +1,8 @@
+{
+  "name": "Sanchuang Free Worker (opt-in)",
+  "description": "Manual, per-Issue, free MiMo/DeepSeek to independently verified Draft PR. Requires reviewed per-repository enrollment.",
+  "iconName": "octicon workflow",
+  "categories": [
+    "Automation"
+  ]
+}
