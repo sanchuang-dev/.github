@@ -544,12 +544,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet && test -z "$(git ls-files --others --exclude-standard)"; then
+          if git diff HEAD --quiet && test -z "$(git ls-files --others --exclude-standard)"; then
             echo "Worker produced no implementation changes." >&2
             exit 1
           fi
 
-          git diff --check
+          git diff HEAD --check
 
       - name: Package model output before independent verification
         id: package
