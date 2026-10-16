@@ -5,7 +5,7 @@ Reference implementation: Mira's reusable External Worker, adapted to Sanchuang'
 
 ## V2 native free Worker (separate, keyless model route)
 
-The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers now that `sanchuang-dev/.github` is public. It still requires this Organization PR to be merged and a separately reviewed, SHA-pinned repository caller before use. The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
+The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers now that `sanchuang-dev/.github` is public. The Organization engine has now been merged and completed the real Sanchuang Jianqu Issue #4 DeepSeek Free → independently verified Draft PR #23 trial. Each additional repository still requires its own reviewed, SHA-pinned opt-in caller; use the [Organization standard onboarding guide](./free-worker-onboarding.md). The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
 
 - Uses pinned official OpenCode CLI `2.0.24` via `https://opencode.ai/v2/install`.
 - Default `opencode/mimo-v2.6-flash-free`; explicit alternate `opencode/deepseek-v4.1-flash-free`; allowlist checked against official model catalog before invocation. Provider availability is **not guaranteed**, and a catalog entry is not proof of a successful inference. No paid fallback or custom endpoint/header impersonation.
