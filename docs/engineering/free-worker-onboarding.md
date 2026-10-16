@@ -4,7 +4,7 @@
 
 ## 1. 责任与边界
 
-- **组织执行器**：[`sanchuang-free-worker-v2.yml`](../../.github/workflows/sanchuang-free-worker-v2.yml)，当前已验证固定版本（Merge SHA）：`0118f124b7bb95d75273f377b69dbab9ca050750`。任何升级都必须通过 PR 审查，再由各业务仓库分别更新 SHA，不使用 `@main` 等可移动引用。
+- **组织执行器**：[`sanchuang-free-worker-v2.yml`](../../.github/workflows/sanchuang-free-worker-v2.yml)，本模板采用安全加固并经过 Codex 审查的固定版本（[PR #8](https://github.com/sanchuang-dev/.github/pull/8) Merge SHA）：`985ff50c297b844af65a920bd38f9c0b1ae31098`。此前完成三创端到端烟测的是 `0118f124b7bb95d75273f377b69dbab9ca050750`；新版增加不可变执行器对默认分支与当前提交的强制验证，**尚未单独进行恶意分支派工与新版本端到端测试**。任何升级必须经 PR 审查，各业务仓库分别更新固定 SHA，不使用 `@main` 等可移动引用。
 - **组织模板**：[`workflow-templates/sanchuang-free-worker.yml`](../../workflow-templates/sanchuang-free-worker.yml)（GitHub Actions 的组织模板入口）；配套的 `.properties.json` 供 GitHub 展示。
 - **仓库调用器**：每个仓库**单独选择接入**，将上述模板复制为该仓库默认分支上的 `.github/workflows/sanchuang-free-worker.yml`，通过独立 PR 审查。模板初始 `ENROLLED=false`、无有效工程分支、验证命令固定失败：**直接复制并不会自动拥有执行能力**。
 - **人工授权**：只有维护者针对**已存在且仍 Open 的 Issue**明确授权施工，才可人工触发该仓库的 `workflow_dispatch`。创建 Issue、机器人评论、PR 事件、CI 通过都不是授权。
