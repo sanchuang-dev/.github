@@ -36,7 +36,7 @@ Natural-language trigger phrases are **instructions to the dispatcher AI**, not 
 
 For public or private application repositories, now that `sanchuang-dev/.github` is **public**, each caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. The Organization V2 workflow is deployed and has passed a real Sanchuang DeepSeek free Issue-to-Draft-PR run. Each target repository still requires a separately reviewed and enabled default-branch caller before dispatch.
 
-Public repositories can invoke the public reusable workflow via a reviewed opt-in caller on their default branch. Until a target's own caller is merged and smoke-tested, preserve its existing workflow; do not switch callers preemptively. Do not copy the Organization constitution into a public project.
+Public and private repositories may start from the [Organization free Worker starter template](../../workflow-templates/sanchuang-free-worker.yml) and follow the [standard onboarding checklist](../../docs/engineering/free-worker-onboarding.md). It fails closed until the repository's base branch and verification are reviewed and enrolled. Until that caller is merged and smoke-tested, preserve existing workflows; do not switch callers preemptively. Jianqu's Issue #4-only F01 caller is not a general-purpose enrollment template. Do not copy the Organization constitution into an application repository.
 
 ## Dispatch with an authorized GitHub CLI
 
