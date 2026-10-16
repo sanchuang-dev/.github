@@ -28,7 +28,7 @@ Natural-language trigger phrases are **instructions to the dispatcher AI**, not 
 ## Default free route
 
 - Organization: `sanchuang-dev`.
-- Organization reusable engine (the `.github` repository is now Public; the V2 PR and target caller must still be merged): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
+- Organization reusable engine (the `.github` repository is now Public; the target caller must be separately reviewed and enabled): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
 - Default official native model: `mimo-v2.6-flash-free`.
 - Alternative official native model: `deepseek-v4.1-flash-free` (explicit selection only; no automatic fallback).
 - Runtime: official OpenCode CLI V2, with one pinned Organization `execute-work-item` Skill.
