@@ -28,15 +28,15 @@ Natural-language trigger phrases are **instructions to the dispatcher AI**, not 
 ## Default free route
 
 - Organization: `sanchuang-dev`.
-- Organization reusable engine (the `.github` repository is now Public; the V2 PR and target caller must still be merged): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
+- Organization reusable engine (the `.github` repository is now Public; the target caller must be separately reviewed and enabled): `sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml`.
 - Default official native model: `mimo-v2.6-flash-free`.
 - Alternative official native model: `deepseek-v4.1-flash-free` (explicit selection only; no automatic fallback).
 - Runtime: official OpenCode CLI V2, with one pinned Organization `execute-work-item` Skill.
 - Delivery: an isolated `feat/worker-*` branch, verified and returned as **Draft PR** to the caller-defined engineering base.
 
-For public or private application repositories, now that `sanchuang-dev/.github` is **public**, each caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. The V2 workflow remains unavailable until the Organization PR is merged and the target repository has a reviewed, enabled default-branch caller.
+For public or private application repositories, now that `sanchuang-dev/.github` is **public**, each caller must pin an immutable SHA of the Organization workflow. The trusted policy loader reads public Organization policies with the caller's `github.token`; it needs **no separate Organization policy PAT and no model-provider API key**. The Organization V2 workflow is deployed and has passed a real Sanchuang DeepSeek free Issue-to-Draft-PR run. Each target repository still requires a separately reviewed and enabled default-branch caller before dispatch.
 
-Public repositories can invoke the public reusable workflow via a reviewed opt-in caller on their default branch. Until a target's own caller is merged and smoke-tested, preserve its existing workflow; do not switch callers preemptively. Do not copy the Organization constitution into a public project.
+Public and private repositories may start from the [Organization free Worker starter template](../../workflow-templates/sanchuang-free-worker.yml) and follow the [standard onboarding checklist](../../docs/engineering/free-worker-onboarding.md). It fails closed until the repository's base branch and verification are reviewed and enrolled. Until that caller is merged and smoke-tested, preserve existing workflows; do not switch callers preemptively. Jianqu's Issue #4-only F01 caller is not a general-purpose enrollment template. Do not copy the Organization constitution into an application repository.
 
 ## Dispatch with an authorized GitHub CLI
 
@@ -54,7 +54,7 @@ gh workflow run sanchuang-free-worker.yml \
 
 Replace every placeholder with verified values; never execute this example unchanged. Use the user's explicitly chosen allowlisted model where supplied. Do not send a key through a CLI argument, prompt, chat, Issue, or Actions input.
 
-If the available GitHub connector cannot dispatch new runs, but the user has an authorized computer connection with working `gh`, that is an alternative dispatcher path; otherwise report the integration gap without claiming success. Prefer GitHub's official workflow-dispatch API / `gh` over an improvised webhook endpoint.
+If the available GitHub connector cannot dispatch runs, direct the maintainer to the GitHub Actions **Run workflow** UI or report the gap. Do not switch to a remote computer or local `gh` unless the user explicitly authorizes that channel for the current task. Never claim dispatch succeeded without a verified Actions run URL.
 
 ## Verification and handoff
 

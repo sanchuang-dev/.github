@@ -5,7 +5,7 @@ Reference implementation: Mira's reusable External Worker, adapted to Sanchuang'
 
 ## V2 native free Worker (separate, keyless model route)
 
-The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers now that `sanchuang-dev/.github` is public. It still requires this Organization PR to be merged and a separately reviewed, SHA-pinned repository caller before use. The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
+The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, independent, public-policy-based Organization reusable workflow for both public and private callers now that `sanchuang-dev/.github` is public. The Organization engine has now been merged and completed the real Sanchuang Jianqu Issue #4 DeepSeek Free → independently verified Draft PR #23 trial. Each additional repository still requires its own reviewed, SHA-pinned opt-in caller; use the [Organization standard onboarding guide](./free-worker-onboarding.md). The legacy `sanchuang-external-worker.yml` and existing managed public-repository copies are deliberately unchanged. V2 requires no OpenCode/Zen API key.
 
 - Uses pinned official OpenCode CLI `2.0.24` via `https://opencode.ai/v2/install`.
 - Default `opencode/mimo-v2.6-flash-free`; explicit alternate `opencode/deepseek-v4.1-flash-free`; allowlist checked against official model catalog before invocation. Provider availability is **not guaranteed**, and a catalog entry is not proof of a successful inference. No paid fallback or custom endpoint/header impersonation.
@@ -44,7 +44,7 @@ jobs:
       pull-requests: write
     uses: sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml@<reviewed-40-character-SHA>
     with:
-      issue_number: ${{ inputs.issue_number }}
+      issue_number: ${{ fromJSON(inputs.issue_number) }}
       model: ${{ inputs.model }}
       base_branch: dev # Replace with repository-specific, verified delivery base.
       verification_command: |
@@ -55,10 +55,12 @@ Do not deploy this example unchanged: verify the repository's default branch, de
 
 ### Verification and rollout boundary
 
-In Mira, MiMo V2.6 official free route passed a native text response, file Tool read/write, and native `skill` call in isolated tests (Actions runs 38844470177 / 38844682826). These are **upstream portability evidence only**, not proof that Sanchuang's new reusable workflow, public-policy loading, any caller enrollment, or a real Issue-to-Draft-PR run has succeeded. Sanchuang must run its own low-risk authorized private-repository smoke and keep any blocked prerequisite explicit. Never merge this infrastructure merely to satisfy a smoke test; review/permission and rollout authority remain with the maintainer.
+**Organization V2 proven on Sanchuang, 2026-10-16:** DeepSeek Free completed a real Jianqu [Issue #4](https://github.com/sanchuang-dev/ai-mirror/issues/4) → [Actions #38875822060](https://github.com/sanchuang-dev/ai-mirror/actions/runs/38875822060) → [Draft PR #23](https://github.com/sanchuang-dev/ai-mirror/pull/23). The native Skill loaded, isolated Worker changed actual docs, the independent verification runner passed, and the write-isolated delivery runner created the Draft PR. The PR later passed Codex review and was merged under separate authorization. Engine revision used in that confirmed E2E: `0118f124b7bb95d75273f377b69dbab9ca050750`. The current standard template instead pins security-reviewed [Organization PR #8](https://github.com/sanchuang-dev/.github/pull/8) merge SHA `985ff50c297b844af65a920bd38f9c0b1ae31098`, which adds trusted default-ref/default-tip checks; **no separate live malicious-ref fixture or E2E for that new revision has been run yet**.
+
+In Mira, MiMo V2.6 Free passed earlier upstream native Skill and file-tool smoke runs, but **MiMo has not yet passed equivalent Sanchuang Issue-to-Draft-PR E2E**. Do not claim that free-model catalog existence guarantees inference availability. Other Sanchuang repositories remain un-enrolled until their own callers are reviewed and tested. Use the [standard onboarding document](./free-worker-onboarding.md), not the limited Jianqu F01 caller.
 
 
-## Route and lifecycle
+## Legacy V1 route and lifecycle (historical)
 
 - The reusable workflow is [`sanchuang-external-worker.yml`](../../.github/workflows/sanchuang-external-worker.yml), invoked explicitly from a repository-local `workflow_dispatch` caller **in a private calling repository**. GitHub does not permit public callers to use reusable workflows stored in private repositories.
 - The only authorized model route is **`opencode/deepseek-v4.1-flash-free`** (OpenCode Zen). Fail closed if that free route disappears or fails; never silently use the paid `deepseek-v4.1-flash` model. Free access is time-limited and may change.

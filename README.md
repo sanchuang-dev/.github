@@ -12,7 +12,9 @@ This repository is the canonical engineering-governance home for `sanchuang-dev`
 - [Testing standard](./docs/engineering/testing-standard.md)
 - [AI Review policy](./ai-review/POLICY.md)
 - [AI Review gateway](./ai-review/GATEWAY.md)
-- [Free External Worker V2 (MiMo / DeepSeek)](./.github/workflows/sanchuang-free-worker-v2.yml) — separate, keyless native OpenCode CLI route
+- [Free External Worker V2 (MiMo / DeepSeek)](./.github/workflows/sanchuang-free-worker-v2.yml) — proven organization-level, keyless OpenCode runner; Draft PR delivery only
+- [Organization free Worker starter template](./workflow-templates/sanchuang-free-worker.yml) — GitHub Actions standard template, disabled until a repository explicitly opts in
+- [Free Worker repository onboarding](./docs/engineering/free-worker-onboarding.md) — engineering-base and CI checks, permissions, authorization, evidence, and version rollout
 - [Dispatcher AI Skill](./skills/dispatch-worker/SKILL.md) — human-language task dispatch contract; requires authorized Actions caller
 - [External Worker (OpenCode Zen / DeepSeek Free)](./docs/engineering/external-worker.md)
 - [Execute Work Item Skill](./skills/execute-work-item/SKILL.md)
