@@ -115,7 +115,7 @@ A higher-priority instruction may change the requested outcome, but it cannot ma
 | Branch / environment promotion | [docs/engineering/environment-model.md](docs/engineering/environment-model.md) |
 | Testing and evidence | [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md) |
 | Execute an explicitly authorized work item with OpenCode Worker | [skills/execute-work-item/SKILL.md](skills/execute-work-item/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
-| Dispatch an explicitly authorized existing Issue to the free Worker | [skills/dispatch-worker/SKILL.md](skills/dispatch-worker/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
+| Dispatch an explicitly authorized existing Issue to the free Worker | [skills/dispatch-worker/SKILL.md](skills/dispatch-worker/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |\n| Enroll a repository in the standard free Worker | [docs/engineering/free-worker-onboarding.md](docs/engineering/free-worker-onboarding.md) and [workflow-templates/sanchuang-free-worker.yml](workflow-templates/sanchuang-free-worker.yml) |
 | Organization AI PR Review | [ai-review/POLICY.md](ai-review/POLICY.md) and [ai-review/OUTPUT-CONTRACT.md](ai-review/OUTPUT-CONTRACT.md) |
 | AI Review execution architecture | [ai-review/GATEWAY.md](ai-review/GATEWAY.md) |
 
