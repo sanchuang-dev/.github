@@ -44,7 +44,7 @@ jobs:
       pull-requests: write
     uses: sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml@<reviewed-40-character-SHA>
     with:
-      issue_number: ${{ inputs.issue_number }}
+      issue_number: ${{ fromJSON(inputs.issue_number) }}
       model: ${{ inputs.model }}
       base_branch: dev # Replace with repository-specific, verified delivery base.
       verification_command: |
