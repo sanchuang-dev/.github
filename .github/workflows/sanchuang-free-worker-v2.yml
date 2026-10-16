@@ -59,6 +59,7 @@ jobs:
       worker_branch: ${{ steps.identity.outputs.worker_branch }}
       base_sha: ${{ steps.identity.outputs.base_sha }}
       model_route: ${{ steps.provider.outputs.model_route }}
+      patch_artifact_name: ${{ steps.identity.outputs.patch_artifact_name }}
 
     steps:
       - name: Validate Sanchuang caller and work item
@@ -172,6 +173,7 @@ jobs:
 
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
           echo "worker_branch=$worker_branch" >> "$GITHUB_OUTPUT"
+          echo "patch_artifact_name=sanchuang-free-patch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve allowlisted native free model
         id: provider
@@ -565,7 +567,7 @@ jobs:
       - name: Upload verified patch as data for a fresh delivery runner
         uses: actions/upload-artifact@v4
         with:
-          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ steps.identity.outputs.patch_artifact_name }}
           path: |
             ${{ runner.temp }}/sanchuang-worker/implementation.patch
             ${{ runner.temp }}/sanchuang-worker/patch.sha256
@@ -762,7 +764,7 @@ jobs:
       - name: Download exact implementation artifact
         uses: actions/download-artifact@v4
         with:
-          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
           path: ${{ runner.temp }}/sanchuang-verified-patch
 
       - name: Apply immutable patch for independent verification
@@ -847,7 +849,7 @@ jobs:
       - name: Download patch data only
         uses: actions/download-artifact@v4
         with:
-          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
           path: ${{ runner.temp }}/sanchuang-delivery
 
       - name: Validate patch, apply and commit with hooks disabled
