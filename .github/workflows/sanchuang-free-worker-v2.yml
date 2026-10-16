@@ -41,20 +41,24 @@ on:
         value: ${{ jobs.worker.outputs.worker_branch }}
       pull_request_url:
         description: Draft pull request URL when the run succeeds
-        value: ${{ jobs.worker.outputs.pull_request_url }}
+        value: ${{ jobs.delivery.outputs.pull_request_url }}
 
 permissions:
-  contents: write
-  issues: read
-  pull-requests: write
+  contents: read
 
 jobs:
   worker:
+    # No write-capable Github token is available in the model's Runner.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       worker_branch: ${{ steps.identity.outputs.worker_branch }}
-      pull_request_url: ${{ steps.pr.outputs.url }}
+      base_sha: ${{ steps.identity.outputs.base_sha }}
+      model_route: ${{ steps.provider.outputs.model_route }}
 
     steps:
       - name: Validate Sanchuang caller and work item
@@ -579,109 +583,28 @@ jobs:
 
           exit "$verification_rc"
 
-      - name: Commit and push isolated worker branch
-        id: commit
+      - name: Package verified patch without any write credential
+        id: package
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
         run: |
           set -euo pipefail
-
-          git config user.name "sanchuang-agent-worker[bot]"
-          git config user.email "sanchuang-agent-worker[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "agent: implement issue #${ISSUE_NUMBER}"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          patch="${RUNNER_TEMP}/sanchuang-worker/implementation.patch"
+          git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
+          test -s "$patch"
+          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+          sha256sum "$patch" | awk '{print $1}' > "${RUNNER_TEMP}/sanchuang-worker/patch.sha256"
 
-          gh auth setup-git
-          git push --set-upstream origin "HEAD:${WORKER_BRANCH}"
-
-      - name: Create Draft PR with durable handoff
-        id: pr
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          BASE_BRANCH: ${{ inputs.base_branch }}
-          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
-          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
-          PROVIDER: ${{ steps.provider.outputs.provider }}
-          PROVIDER_PROFILE: ${{ steps.provider.outputs.provider_profile }}
-          PROVIDER_REGISTRY_REF: ${{ steps.provider.outputs.provider_registry_ref }}
-          MODEL_ROUTE: ${{ steps.provider.outputs.model_route }}
-          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
-        run: |
-          set -euo pipefail
-
-          export ISSUE_TITLE
-          ISSUE_TITLE="$(jq -r '.title' "${RUNNER_TEMP}/sanchuang-worker/issue.json" | cut -c1-220)"
-
-          python3 <<'PY'
-          import os
-          from pathlib import Path
-
-          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
-          worker_output = (root / "worker-output.txt").read_text(errors="replace")[:12000]
-          verification_output = (root / "verification.log").read_text(errors="replace")[:12000]
-
-          body = f"""## Sanchuang external Worker handoff
-
-          - Work item: #{os.environ["ISSUE_NUMBER"]} — {os.environ["ISSUE_TITLE"]}
-          - Delivery base: `{os.environ["BASE_BRANCH"]}`
-          - Base SHA: `{os.environ["BASE_SHA"]}`
-          - Worker branch: `{os.environ["WORKER_BRANCH"]}`
-          - Worker harness: OpenCode CLI 2.0.24
-          - Provider: `{os.environ["PROVIDER"]}`
-          - Provider profile: `{os.environ["PROVIDER_PROFILE"] or "builtin"}`
-          - Provider registry revision: `{os.environ["PROVIDER_REGISTRY_REF"]}`
-          - Model route: `{os.environ["MODEL_ROUTE"]}`
-          - Portable Skill: `execute-work-item@resolved-org-policy-commit`
-          - Verification: PASS
-          - Verification command: `{os.environ["VERIFICATION_COMMAND"]}`
-
-          This PR is intentionally **Draft**. Worker execution does not grant merge, Issue acceptance/closure, environment promotion, release, or deployment authority.
-
-          <details>
-          <summary>Worker handoff</summary>
-
-          <pre>
-          {worker_output}
-          </pre>
-          </details>
-
-          <details>
-          <summary>Verification output</summary>
-
-          <pre>
-          {verification_output}
-          </pre>
-          </details>
-          """
-          (root / "pr-body.md").write_text(body)
-          PY
-
-          pr_url="$(gh pr create             --draft             --base "$BASE_BRANCH"             --head "$WORKER_BRANCH"             --title "agent: #${ISSUE_NUMBER} ${ISSUE_TITLE}"             --body-file "${RUNNER_TEMP}/sanchuang-worker/pr-body.md")"
-
-          test -n "$pr_url"
-          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Draft PR boundary
-        id: boundary
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ steps.pr.outputs.url }}
-          BASE_BRANCH: ${{ inputs.base_branch }}
-          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
-        run: |
-          set -euo pipefail
-
-          pr_json="$(gh pr view "$PR_URL" --json isDraft,baseRefName,headRefName,state)"
-          test "$(jq -r '.isDraft' <<< "$pr_json")" = "true"
-          test "$(jq -r '.baseRefName' <<< "$pr_json")" = "$BASE_BRANCH"
-          test "$(jq -r '.headRefName' <<< "$pr_json")" = "$WORKER_BRANCH"
-          test "$(jq -r '.state' <<< "$pr_json")" = "OPEN"
+      - name: Upload verified patch as data for a fresh delivery runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/implementation.patch
+            ${{ runner.temp }}/sanchuang-worker/patch.sha256
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Finalize structured Worker evidence
         id: evidence
@@ -692,7 +615,7 @@ jobs:
           BASE_BRANCH: ${{ inputs.base_branch }}
           BASE_SHA: ${{ steps.identity.outputs.base_sha }}
           WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
-          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_URL: ""
           VERIFICATION_COMMAND: ${{ inputs.verification_command }}
           REQUESTED_PROVIDER: ${{ inputs.provider }}
           REQUESTED_MODEL: ${{ inputs.model }}
@@ -708,9 +631,7 @@ jobs:
           WORKER_OUTCOME: ${{ steps.worker.outcome }}
           BOUNDED_OUTCOME: ${{ steps.bounded.outcome }}
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
-          COMMIT_OUTCOME: ${{ steps.commit.outcome }}
-          PR_OUTCOME: ${{ steps.pr.outcome }}
-          BOUNDARY_OUTCOME: ${{ steps.boundary.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
         run: |
           set -euo pipefail
 
@@ -742,9 +663,7 @@ jobs:
               ("worker", os.getenv("WORKER_OUTCOME")),
               ("bounded_change", os.getenv("BOUNDED_OUTCOME")),
               ("trusted_verification", os.getenv("VERIFY_OUTCOME")),
-              ("commit_push", os.getenv("COMMIT_OUTCOME")),
-              ("draft_pr", os.getenv("PR_OUTCOME")),
-              ("draft_pr_boundary", os.getenv("BOUNDARY_OUTCOME")),
+              ("patch_package", os.getenv("PACKAGE_OUTCOME")),
           ]
           failed = next((name for name, outcome in stages if outcome == "failure"), "")
           terminal = "failure" if failed else ("success" if all(outcome in {"success", "skipped"} for _, outcome in stages) else "incomplete")
@@ -781,9 +700,7 @@ jobs:
               "worker": os.getenv("WORKER_OUTCOME"),
               "bounded_change": os.getenv("BOUNDED_OUTCOME"),
               "trusted_verification": os.getenv("VERIFY_OUTCOME"),
-              "commit_push": os.getenv("COMMIT_OUTCOME"),
-              "draft_pr": os.getenv("PR_OUTCOME"),
-              "draft_pr_boundary": os.getenv("BOUNDARY_OUTCOME"),
+              "patch_package": os.getenv("PACKAGE_OUTCOME"),
           }
 
           session = {}
@@ -803,11 +720,11 @@ jobs:
               "base_branch": os.getenv("BASE_BRANCH"),
               "base_sha": os.getenv("BASE_SHA") or identity.get("base_sha"),
               "worker_branch": os.getenv("WORKER_BRANCH") or identity.get("worker_branch"),
-              "opencode_version": identity.get("opencode_version", "1.18.34"),
+              "opencode_version": identity.get("opencode_version", "2.0.24"),
               "requested_provider": os.getenv("REQUESTED_PROVIDER") or "opencode",
               "requested_provider_profile": os.getenv("REQUESTED_PROVIDER_PROFILE") or None,
               "requested_provider_registry_ref": os.getenv("REQUESTED_PROVIDER_REGISTRY_REF") or None,
-              "requested_model": os.getenv("REQUESTED_MODEL") or "deepseek-v4.1-flash-free",
+              "requested_model": os.getenv("REQUESTED_MODEL") or "mimo-v2.6-flash-free",
               "provider": identity.get("provider"),
               "provider_profile": identity.get("provider_profile") or None,
               "provider_registry_ref": identity.get("provider_registry_ref"),
@@ -817,11 +734,11 @@ jobs:
               "skill_commit": identity.get("skill_commit"),
               "started_at": identity.get("run_started_at"),
               "ended_at": os.getenv("RUN_ENDED_AT"),
-              "terminal_status": os.getenv("TERMINAL_STATUS"),
+              "terminal_status": "ready_for_delivery" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
               "failure_stage": os.getenv("FAILURE_STAGE"),
               "stages": stages,
               "session": session,
-              "commit_sha": os.getenv("COMMIT_SHA") if os.getenv("COMMIT_OUTCOME") == "success" else None,
+              "commit_sha": None, # trusted delivery in a separate runner
               "draft_pr_url": os.getenv("PR_URL") or None,
               "verification": {
                   "command": (os.getenv("VERIFICATION_COMMAND") or "")[:4000],
@@ -859,3 +776,104 @@ jobs:
             ${{ runner.temp }}/sanchuang-worker/diff-stat.txt
           if-no-files-found: warn
           retention-days: 14
+
+
+  delivery:
+    # A separate fresh runner, with no model process or modified Git hooks.
+    needs: worker
+    if: ${{ needs.worker.result == 'success' }}
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pull_request_url: ${{ steps.pr.outputs.url }}
+    steps:
+      - name: Checkout frozen trusted base on fresh runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download patch data only
+        uses: actions/download-artifact@v4
+        with:
+          name: sanchuang-free-patch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-delivery
+
+      - name: Validate patch, apply and commit with hooks disabled
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          git check-ref-format --branch "$WORKER_BRANCH"
+          delivery="${RUNNER_TEMP}/sanchuang-delivery"
+          patch="$delivery/implementation.patch"
+          test -s "$patch"
+          test -s "$delivery/patch.sha256"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$(cat "$delivery/patch.sha256")"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git switch -c "$WORKER_BRANCH"
+          git config user.name "sanchuang-agent-worker[bot]"
+          git config user.email "sanchuang-agent-worker[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit -m "agent: implement issue #${ISSUE_NUMBER}"
+
+      - name: Push isolated branch without running repository scripts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git -c core.hooksPath=/dev/null push --set-upstream origin "HEAD:${WORKER_BRANCH}"
+
+      - name: Create and verify Draft PR
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          MODEL_ROUTE: ${{ needs.worker.outputs.model_route }}
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          issue_title="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" --jq '.title' | cut -c1-220)"
+          body="${RUNNER_TEMP}/sanchuang-delivery/pr-body.md"
+          cat > "$body" <<EOF
+          ## Sanchuang free Worker handoff
+
+          - Work item: #${ISSUE_NUMBER} — ${issue_title}
+          - Delivery base: \`${BASE_BRANCH}\`
+          - Base SHA: \`${BASE_SHA}\`
+          - Worker branch: \`${WORKER_BRANCH}\`
+          - Model: \`${MODEL_ROUTE}\`
+          - Worker harness: OpenCode CLI 2.0.24
+          - Organization Skill: \`execute-work-item\`
+          - Trusted verification: PASS in isolated read-only Worker Job
+          - Verification command: \`${VERIFICATION_COMMAND}\`
+          - Evidence: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          This PR is intentionally **Draft**. No merge, Issue closure, release or environment promotion authority is granted.
+          EOF
+          pr_url="$(gh pr create --draft --base "$BASE_BRANCH" --head "$WORKER_BRANCH" --title "agent: #${ISSUE_NUMBER} ${issue_title}" --body-file "$body")"
+          test -n "$pr_url"
+          pr_json="$(gh pr view "$pr_url" --json isDraft,baseRefName,headRefName,state)"
+          test "$(jq -r '.isDraft' <<< "$pr_json")" = "true"
+          test "$(jq -r '.baseRefName' <<< "$pr_json")" = "$BASE_BRANCH"
+          test "$(jq -r '.headRefName' <<< "$pr_json")" = "$WORKER_BRANCH"
+          test "$(jq -r '.state' <<< "$pr_json")" = "OPEN"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
