@@ -35,10 +35,6 @@ on:
         required: false
         type: string
         default: ''
-    secrets:
-      organization_policy_token:
-        description: Read-only policy fetch access to private sanchuang-dev/.github
-        required: true
     outputs:
       worker_branch:
         description: Isolated worker branch created from the explicit base
@@ -224,13 +220,15 @@ jobs:
         id: policy
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.organization_policy_token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
           mkdir -p "${HOME}/.agents/skills/execute-work-item"
 
-          test -n "${GH_TOKEN:-}" || { echo "::error::Organization policy read token is required."; exit 1; }
+          # Public Organization policy repository: caller-scoped GitHub token is
+          # sufficient for read-only fetches. Never pass it to the model.
+          test -n "${GH_TOKEN:-}" || { echo "::error::GitHub token is unavailable."; exit 1; }
           policy_revision="$(gh api "repos/sanchuang-dev/.github/commits/main" --jq '.sha')"
           test -n "$policy_revision"
           printf 'skill_commit=%s\n' "$policy_revision" >> "${RUNNER_TEMP}/sanchuang-worker/identity.txt"
