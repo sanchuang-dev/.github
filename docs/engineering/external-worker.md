@@ -60,7 +60,7 @@ Do not deploy this example unchanged: verify the repository's default branch, de
 In Mira, MiMo V2.6 Free passed earlier upstream native Skill and file-tool smoke runs, but **MiMo has not yet passed equivalent Sanchuang Issue-to-Draft-PR E2E**. Do not claim that free-model catalog existence guarantees inference availability. Other Sanchuang repositories remain un-enrolled until their own callers are reviewed and tested. Use the [standard onboarding document](./free-worker-onboarding.md), not the limited Jianqu F01 caller.
 
 
-## Route and lifecycle
+## Legacy V1 route and lifecycle (historical)
 
 - The reusable workflow is [`sanchuang-external-worker.yml`](../../.github/workflows/sanchuang-external-worker.yml), invoked explicitly from a repository-local `workflow_dispatch` caller **in a private calling repository**. GitHub does not permit public callers to use reusable workflows stored in private repositories.
 - The only authorized model route is **`opencode/deepseek-v4.1-flash-free`** (OpenCode Zen). Fail closed if that free route disappears or fails; never silently use the paid `deepseek-v4.1-flash` model. Free access is time-limited and may change.
