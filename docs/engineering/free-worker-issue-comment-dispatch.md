@@ -18,7 +18,7 @@
 /free-worker run model=deepseek-v4.1-flash-free
 ```
 
-`/free-worker run model=mimo-v2.6-flash-free` 等价于默认指令。指令必须占据评论全文；不允许附加任务文本、多行指令、额外参数或 API Key。任务范围只取现有 Issue 正文及经过权限核验的维护者修订评论。
+组织模板默认使用 MiMo；`/free-worker run model=mimo-v2.6-flash-free` 是组织默认的显式写法。**仓库可保留原有不同的手工默认模型**，例如见趣仓库裸指令默认 DeepSeek，显式指定 MiMo 才切换。指令必须占据评论全文；不允许附加任务文本、多行指令、额外参数或 API Key。任务范围只取现有 Issue 正文及经过权限核验的维护者修订评论。
 
 使用 GitHub 连接器时，发送的是**普通 Issue 评论**，不需要也不应该从聊天转入远程电脑运行 `gh`。仅当仓库默认分支的调用器已启用 `issue_comment: created`，GitHub 才会自动接收该事件。评论成功不表示 Worker 成功；应核对 Actions Run、独立 verify、delivery 及 Draft PR。
 
@@ -32,12 +32,12 @@
 - 只允许三种精确的指令文本与两款官方免费模型；其余格式全部拒绝，不做 shell eval、提示词拼接或外部 URL/分支参数透传。
 - `ENROLLED` 守卫、默认分支校验、工程基线守卫仍必须全部通过；额外运行 V2 不可变组织引擎自身的分支/当前提交/Issue 检查。
 - `enrollment` 只有读权限；调用已固定 SHA 的 Worker V2 后继续保持模型只读、独立只读验证、交付 Runner 单独写权限的旧契约。只交 Draft PR，绝不自动合并、关 Issue、部署或发布。
-- 相同 Issue 的 Worker job 使用 GitHub Actions concurrency 串行（**串行不等于永久去重**；手动 rerun 或重复发新评论仍可能产生新 Run，维护者需核对已有 PR）。
+- 同一 Issue 的**整个 Workflow Run** 使用 GitHub Actions concurrency 串行；排队解除后才运行 enrollment 的实时评论 / 作者权限 / Issue 验证，避免检查先通过、队列等待期间授权被撤销。**串行不等于永久去重**；多条评论或手动 rerun 仍可能产生新 Run，维护者需核对已有 PR。GitHub 同组只保证至多一个运行中与一个等待中，新请求可能替换更早等待的请求。
 - 保留 `workflow_dispatch` 兼容入口，不删除任何既有工作流。
 
 ## 独立验收标准
 
-1. 无关评论不产生 Worker 施工；非白名单指令、Bot、无写权限账号、PR 评论、关闭 Issue、无正文 Issue 均不能启动 Worker。
+1. 在同一 Issue 已有 Run 占用并发组时，新 Run 排队；等待期间删改评论、撤销作者仓库权限或关闭 Issue，解除排队后守卫必须拒绝，模型不得启动。无关评论不产生 Worker 施工；非白名单指令、Bot、无写权限账号、PR 评论、关闭 Issue、无正文 Issue 均不能启动 Worker。
 2. 已授权维护者对开放 Issue 发送精确指令后，Actions 必须有 `issue_comment` 事件 Run；守卫输出真实 Issue 号和模型，不允许未认证的评论覆盖工作流输入。
 3. 真实 Run 的 `worker`、`verify`、`delivery` 独立成功，输出 Draft PR 指向可信工程基线；不出现模型环境写 Token、自动合并或环境晋级。
 4. 对每个新接入业务仓库，必须检查其自身 `AGENTS.md`、现有工作流、真实验证命令并通过接入 PR；组织模板 PR 合并**不算完成业务仓库 E2E**。
