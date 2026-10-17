@@ -248,14 +248,14 @@ class IssueCommentGuardTests(unittest.TestCase):
         # The mock keeps legacy EVENT_PATH empty, just like the failed Actions run.
         rc, out, err = self.run_guard()
         self.assertEqual(rc, 0, err)
-        self.assertIn("issue_number=42\\n", out)
+        self.assertIn("issue_number=42\n", out)
         rc, out, _ = self.run_guard(GITHUB_EVENT_PATH="")
         self.assertNotEqual(rc, 0)
         self.assertNotIn("issue_number=", out)
         # Manual dispatch has no reason to parse an Issue comment event file.
         rc, out, err = self.run_guard(manual=True, GITHUB_EVENT_PATH="")
         self.assertEqual(rc, 0, err)
-        self.assertIn("issue_number=42\\n", out)
+        self.assertIn("issue_number=42\n", out)
 
     def test_event_registration_and_immutable_engine(self):
         source = TEMPLATE.read_text(encoding="utf-8")
