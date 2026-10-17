@@ -8,9 +8,13 @@ on:
       - "skills/browser-verification/SKILL.md"
       - ".github/workflows/sanchuang-free-worker-v2.yml"
       - ".github/workflows/worker-runtime-tests.yml"
+      - "workflow-templates/sanchuang-free-worker.yml"
+      - "tests/test_free_worker_issue_comment.py"
   push:
     branches: [main]
     paths:
+      - "workflow-templates/sanchuang-free-worker.yml"
+      - "tests/test_free_worker_issue_comment.py"
       - "scripts/worker-live-logger.py"
       - "tests/test_worker_live_logger.py"
       - "skills/browser-verification/SKILL.md"
@@ -29,4 +33,6 @@ jobs:
       - name: Compile supervisor
         run: python3 -m py_compile scripts/worker-live-logger.py
       - name: Regression tests (no model or secrets)
-        run: python3 -m unittest discover -s tests -p "test_worker_live_logger.py" -v
+        run: |
+          python3 -m unittest discover -s tests -p "test_worker_live_logger.py" -v
+          python3 -m unittest discover -s tests -p "test_free_worker_issue_comment.py" -v
