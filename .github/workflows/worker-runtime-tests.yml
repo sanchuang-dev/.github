@@ -1,0 +1,32 @@
+name: Worker runtime helper checks
+
+on:
+  pull_request:
+    paths:
+      - "scripts/worker-live-logger.py"
+      - "tests/test_worker_live_logger.py"
+      - "skills/browser-verification/SKILL.md"
+      - ".github/workflows/sanchuang-free-worker-v2.yml"
+      - ".github/workflows/worker-runtime-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/worker-live-logger.py"
+      - "tests/test_worker_live_logger.py"
+      - "skills/browser-verification/SKILL.md"
+      - ".github/workflows/sanchuang-free-worker-v2.yml"
+      - ".github/workflows/worker-runtime-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile supervisor
+        run: python3 -m py_compile scripts/worker-live-logger.py
+      - name: Regression tests (no model or secrets)
+        run: python3 -m unittest discover -s tests -p "test_worker_live_logger.py" -v

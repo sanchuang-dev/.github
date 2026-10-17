@@ -114,6 +114,7 @@ A higher-priority instruction may change the requested outcome, but it cannot ma
 | Repository / team permissions and production authority | [docs/governance/permissions-model.md](docs/governance/permissions-model.md) |
 | Branch / environment promotion | [docs/engineering/environment-model.md](docs/engineering/environment-model.md) |
 | Testing and evidence | [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md) |
+| Browser-based UI evidence inside an authorized Worker | [skills/browser-verification/SKILL.md](skills/browser-verification/SKILL.md) |
 | Execute an explicitly authorized work item with OpenCode Worker | [skills/execute-work-item/SKILL.md](skills/execute-work-item/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
 | Dispatch an explicitly authorized existing Issue to the free Worker | [skills/dispatch-worker/SKILL.md](skills/dispatch-worker/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
 | Enroll a repository in the standard free Worker | [docs/engineering/free-worker-onboarding.md](docs/engineering/free-worker-onboarding.md) and [workflow-templates/sanchuang-free-worker.yml](workflow-templates/sanchuang-free-worker.yml) |
