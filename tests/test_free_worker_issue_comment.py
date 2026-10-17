@@ -211,16 +211,32 @@ class IssueCommentGuardTests(unittest.TestCase):
 
     def test_concurrency_covers_entire_run_before_authorization(self):
         source = TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn(
-            "concurrency:\n"
-            "  group: free-worker-${{ github.repository }}-"
-            "${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number }}\n"
-            "  cancel-in-progress: false\n\njobs:\n  enrollment:",
-            source,
-        )
+        lock = source.split("\nconcurrency:\n", 1)[1].split("\njobs:\n", 1)[0]
+        self.assertIn("group: >-", lock)
+        self.assertIn("queue: max", lock)
+        self.assertIn("cancel-in-progress: false", lock)
+        # Unrelated, PR and nonhuman comments must not contend with the
+        # authenticated dispatch queue. Full verification runs after waiting.
+        for marker in [
+            "github.event.issue.pull_request",
+            "github.event.comment.user.type != 'User'",
+            "github.event.sender.login != github.event.comment.user.login",
+            "github.actor != github.event.comment.user.login",
+            "github.run_id",
+            "format('free-worker-ignored-{0}'",
+            "format('free-worker-{0}-{1}'",
+            "github.event.issue.number || inputs.issue_number",
+        ]:
+            self.assertIn(marker, lock)
+        for directive in [
+            "github.event.comment.body != '/free-worker run'",
+            "github.event.comment.body != '/free-worker run model=mimo-v2.6-flash-free'",
+            "github.event.comment.body != '/free-worker run model=deepseek-v4.1-flash-free'",
+        ]:
+            self.assertIn(directive, lock)
+        self.assertNotIn("author_association", lock)
         worker = source.split("\n  worker:\n", 1)[1]
         self.assertNotIn("\n    concurrency:\n", worker)
-        self.assertNotIn("needs.enrollment.outputs.issue_number }}\n      cancel-in-progress", worker)
 
     def test_event_registration_and_immutable_engine(self):
         source = TEMPLATE.read_text(encoding="utf-8")
