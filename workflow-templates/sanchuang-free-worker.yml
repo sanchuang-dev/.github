@@ -80,22 +80,41 @@ jobs:
             sender="$(jq -r '.sender.login // empty' "$EVENT_PATH")"
             author_type="$(jq -r '.comment.user.type // empty' "$EVENT_PATH")"
             issue_is_pr="$(jq -r 'has("issue") and (.issue | has("pull_request"))' "$EVENT_PATH")"
-            body="$(jq -r '.comment.body // ""' "$EVENT_PATH")"
+            comment_id="$(jq -er '.comment.id | numbers' "$EVENT_PATH")"
             test "$state" = open && test "$issue_is_pr" = false ||
               { echo "::error::Only an open work-item Issue may be dispatched." >&2; exit 1; }
             test -n "$comment_author" && test "$comment_author" = "$ACTOR" && test "$sender" = "$ACTOR" &&
               test "$author_type" = User ||
               { echo "::error::Comment author must be the authenticated human event actor." >&2; exit 1; }
-            # Exact syntax; CRLF/trailing spaces are not silently normalized.
-            case "$body" in
-              '/free-worker run'|'/free-worker run model=mimo-v2.6-flash-free')
-                model=mimo-v2.6-flash-free ;;
-              '/free-worker run model=deepseek-v4.1-flash-free')
-                model=deepseek-v4.1-flash-free ;;
-              *)
-                echo "::error::Invalid dispatch directive. Use /free-worker run [model=allowlisted-free-model]." >&2
-                exit 1 ;;
+            case "$issue_number:$comment_id" in
+              *[!0-9:]*|0:*|*:0|:*)
+                echo "::error::Invalid Issue/comment identity." >&2; exit 1 ;;
             esac
+            # jq compares the JSON string exactly: shell command substitution would
+            # strip trailing newlines and accidentally accept multiline directives.
+            model="$(jq -er '
+              if .comment.body == "/free-worker run" or
+                 .comment.body == "/free-worker run model=mimo-v2.6-flash-free" then
+                "mimo-v2.6-flash-free"
+              elif .comment.body == "/free-worker run model=deepseek-v4.1-flash-free" then
+                "deepseek-v4.1-flash-free"
+              else
+                error("Invalid dispatch directive")
+              end
+            ' "$EVENT_PATH")" ||
+              { echo "::error::Use exactly /free-worker run [model=allowlisted-free-model]." >&2; exit 1; }
+            # Reject edited/deleted comments and mismatched identity at execution time.
+            # Do not trust only the event's potentially stale text or author.
+            comment_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id")"
+            jq -e --slurpfile event "$EVENT_PATH" '
+              .id == $event[0].comment.id and
+              .user.id == $event[0].comment.user.id and
+              .user.login == $event[0].comment.user.login and
+              .user.type == "User" and
+              .issue_url == $event[0].issue.url and
+              .body == $event[0].comment.body
+            ' <<< "$comment_json" >/dev/null ||
+              { echo "::error::Dispatch comment was removed, edited or mismatched." >&2; exit 1; }
             # Check CURRENT repository permission, not self-declared association in a comment.
             permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$comment_author/permission" --jq '.permission')"
             case "$permission" in
