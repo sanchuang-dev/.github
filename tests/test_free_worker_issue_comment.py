@@ -57,6 +57,8 @@ elif "/issues/" in endpoint:
         issue["pull_request"] = {}
     if scenario.get("live_empty"):
         issue["body"] = ""
+    if scenario.get("live_whitespace"):
+        issue["body"] = "  \n \t "
     print(json.dumps(issue))
 else:
     print("unrecognized gh endpoint " + endpoint, file=sys.stderr)
@@ -167,6 +169,7 @@ class IssueCommentGuardTests(unittest.TestCase):
             (event(), {"live_closed": True}),
             (event(), {"live_pr": True}),
             (event(), {"live_empty": True}),
+            (event(), {"live_whitespace": True}),
             (event(), {"comment_deleted": True}),
             (event(), {"comment_edited": True}),
             (event(), {"comment_other_author": True}),
