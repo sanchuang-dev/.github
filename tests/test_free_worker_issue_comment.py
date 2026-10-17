@@ -212,15 +212,15 @@ class IssueCommentGuardTests(unittest.TestCase):
     def test_concurrency_covers_entire_run_before_authorization(self):
         source = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn(
-            "concurrency:\\n"
+            "concurrency:\n"
             "  group: free-worker-${{ github.repository }}-"
-            "${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number }}\\n"
-            "  cancel-in-progress: false\\n\\njobs:\\n  enrollment:",
+            "${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number }}\n"
+            "  cancel-in-progress: false\n\njobs:\n  enrollment:",
             source,
         )
-        worker = source.split("\\n  worker:\\n", 1)[1]
-        self.assertNotIn("\\n    concurrency:\\n", worker)
-        self.assertNotIn("needs.enrollment.outputs.issue_number }}\\n      cancel-in-progress", worker)
+        worker = source.split("\n  worker:\n", 1)[1]
+        self.assertNotIn("\n    concurrency:\n", worker)
+        self.assertNotIn("needs.enrollment.outputs.issue_number }}\n      cancel-in-progress", worker)
 
     def test_event_registration_and_immutable_engine(self):
         source = TEMPLATE.read_text(encoding="utf-8")
