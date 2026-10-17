@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
     outputs:
       engineering_base: ${{ steps.guard.outputs.engineering_base }}
       issue_number: ${{ steps.guard.outputs.issue_number }}
