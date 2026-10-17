@@ -195,6 +195,33 @@ class IssueCommentGuardTests(unittest.TestCase):
                 rc, _, _ = self.run_guard(**overrides)
                 self.assertNotEqual(rc, 0)
 
+    def test_revoked_while_queued_fails_when_lock_released(self):
+        # The workflow-level concurrency lock must be acquired BEFORE this
+        # live guard runs. Model the live state after a queued job is released.
+        for scenario in [
+            {"comment_deleted": True},
+            {"comment_edited": True},
+            {"permission": "read"},
+            {"live_closed": True},
+        ]:
+            with self.subTest(revocation=scenario):
+                rc, out, _ = self.run_guard(event(), scenario=scenario)
+                self.assertNotEqual(rc, 0)
+                self.assertNotIn("issue_number=", out)
+
+    def test_concurrency_covers_entire_run_before_authorization(self):
+        source = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn(
+            "concurrency:\\n"
+            "  group: free-worker-${{ github.repository }}-"
+            "${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number }}\\n"
+            "  cancel-in-progress: false\\n\\njobs:\\n  enrollment:",
+            source,
+        )
+        worker = source.split("\\n  worker:\\n", 1)[1]
+        self.assertNotIn("\\n    concurrency:\\n", worker)
+        self.assertNotIn("needs.enrollment.outputs.issue_number }}\\n      cancel-in-progress", worker)
+
     def test_event_registration_and_immutable_engine(self):
         source = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("issue_comment:\n    types: [created]", source)
