@@ -71,6 +71,8 @@ Never modify files that the repository contract marks forbidden. Treat generated
 
 Run the cheapest reliable checks that can actually prove the acceptance criteria.
 
+For browser or screenshot acceptance, load the Organization `browser-verification` Skill before opening a browser. Prefer existing tested browser tooling and bounded attempts; if browser verification fails, report the gap without consuming the remaining Worker execution budget in repeated ad-hoc CDP debugging.
+
 - Test behavior and contracts, not incidental implementation shape.
 - Do not claim an unexecuted test, build, smoke, deployment, or device check as passed.
 - Do not turn a failing check green by skipping, deleting, weakening, or broadening mocks around the subject under test.
