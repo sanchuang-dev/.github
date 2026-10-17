@@ -10,11 +10,11 @@ on:
       - ".github/workflows/worker-runtime-tests.yml"
       - "workflow-templates/sanchuang-free-worker.yml"
       - "tests/test_free_worker_issue_comment.py"
-      - "workflow-templates/sanchuang-free-worker.yml"
-      - "tests/test_free_worker_issue_comment.py"
   push:
     branches: [main]
     paths:
+      - "workflow-templates/sanchuang-free-worker.yml"
+      - "tests/test_free_worker_issue_comment.py"
       - "scripts/worker-live-logger.py"
       - "tests/test_worker_live_logger.py"
       - "skills/browser-verification/SKILL.md"
