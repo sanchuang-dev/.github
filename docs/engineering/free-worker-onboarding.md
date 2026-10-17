@@ -7,7 +7,7 @@
 - **组织执行器**：[`sanchuang-free-worker-v2.yml`](../../.github/workflows/sanchuang-free-worker-v2.yml)，本模板采用安全加固并经过 Codex 审查的固定版本（[PR #8](https://github.com/sanchuang-dev/.github/pull/8) Merge SHA）：`985ff50c297b844af65a920bd38f9c0b1ae31098`。此前完成三创端到端烟测的是 `0118f124b7bb95d75273f377b69dbab9ca050750`；新版增加不可变执行器对默认分支与当前提交的强制验证，**尚未单独进行恶意分支派工与新版本端到端测试**。任何升级必须经 PR 审查，各业务仓库分别更新固定 SHA，不使用 `@main` 等可移动引用。
 - **组织模板**：[`workflow-templates/sanchuang-free-worker.yml`](../../workflow-templates/sanchuang-free-worker.yml)（GitHub Actions 的组织模板入口）；配套的 `.properties.json` 供 GitHub 展示。
 - **仓库调用器**：每个仓库**单独选择接入**，将上述模板复制为该仓库默认分支上的 `.github/workflows/sanchuang-free-worker.yml`，通过独立 PR 审查。模板初始 `ENROLLED=false`、无有效工程分支、验证命令固定失败：**直接复制并不会自动拥有执行能力**。
-- **人工授权**：只有维护者针对**已存在且仍 Open 的 Issue**明确授权施工，才可人工触发该仓库的 `workflow_dispatch`。创建 Issue、机器人评论、PR 事件、CI 通过都不是授权。
+- **人工授权**：只有维护者针对**已存在且仍 Open 的 Issue**明确授权施工，才可通过人工 `workflow_dispatch`，或经过仓库单独审查启用的受控 Issue 评论入口派工。创建 Issue、普通评论、机器人评论、PR 事件、CI 通过都不是授权。
 - **交付权限**：只允许自由模型在隔离 Runner 中施工 → 全新只读 Runner 验证同一补丁 → 全新写权限 Runner 交付 **Draft PR**。Worker 不得自行合并、关卡验收、关闭 Issue、推进环境、部署或发布；分支晋级遵循 [environment-model](./environment-model.md)。
 
 ## 2. 接入前逐仓库检查
@@ -19,10 +19,10 @@
    - 设置 `ENROLLED: "true"`；
    - 将 `ENGINEERING_BASE` 改为已核实且可写入 PR 的工程基线，如 `dev`；
    - 用该仓库的真实命令替换 `verification_command` 中的两个失败哨兵行；
-   - 保留 `workflow_dispatch` 手动触发、`fromJSON(inputs.issue_number)` 数字类型、两款 free 模型白名单、最小权限、固定组织 SHA 和单独守卫 Job。
+   - 保留 `workflow_dispatch` 手动触发、校验后 Issue 号的 `fromJSON` 数字转换、两款 free 模型白名单、最小权限、固定组织 SHA 和单独守卫 Job。若启用 `issue_comment: created`，须保持评论身份 / 当前仓库权限 / Issue 状态 / 全文指令的 fail-closed 门禁，并经独立评审。
 5. 维护者审查并明确合并该**接入 PR**，让工作流进入默认分支。接入完成 ≠ 已触发任务 ≠ 已验证该仓库的真实端到端流程。不得因为存在组织模板就对外声称所有仓库已接入。
 
-> **见趣例外**：`sanchuang-dev/ai-mirror` 现有 `jianqu-free-worker-f01.yml` 是仅限 Issue #4、仅限文档、`main` bootstrap 的历史特许，**不能**直接复用为普适调用器；它所在的 Issue 已验收关闭。见趣后续按 ENG-02 的工程分支决策再独立接入标准模板。已有 V1 的业务仓库必须保留 V1，迁移需独立评审 PR，不得覆盖或并发派同一 Issue。
+> **见趣例外**：`sanchuang-dev/ai-mirror` 现有 `jianqu-free-worker-f01.yml` 是仅限 Issue #4、仅限文档、`main` bootstrap 的历史特许，**不能**直接复用为普适调用器；它所在的 Issue 已验收关闭。见趣已在 `main` 启用面向 `dev` 的一般 V2 调用器；新评论入口仍需单独审查 PR，并不因为组织模板升级自动生效。已有 V1 的业务仓库必须保留 V1，迁移需独立评审 PR，不得覆盖或并发派同一 Issue。
 
 ## 3. 模型、授权与运行
 
@@ -35,7 +35,7 @@
 
 **派工前提**：核对目标仓库、Open Issue 编号、执行指令中的明确授权、默认分支上已生效的仓库调用器、实际工程基线和本仓库需触发的真实工作流名称。没有明确授权或运行入口不满足条件时停止。
 
-**GitHub UI 人工派工**：目标仓库 → Actions → `Sanchuang Free Worker (opt-in)` → Run workflow → 选择默认分支 → 填写 Issue 编号与 MiMo/DeepSeek → Run。当前 ChatGPT GitHub 连接器如不具备 workflow dispatch 操作，就引导用户直接从 GitHub UI 派工；**不得未告知就使用用户远程电脑或本地 `gh` 作为替代**。如果用户明确逐次授权其他派工渠道，按授权限定操作并核对返回的 Actions run ID。
+**GitHub UI 人工派工**：目标仓库 → Actions → `Sanchuang Free Worker (opt-in)` → Run workflow → 选择默认分支 → 填写 Issue 编号与 MiMo/DeepSeek → Run。如果目标仓库的默认分支已经**独立合并并启用评论派工守卫**，则可按照 [GitHub Issue 原生派工入口](./free-worker-issue-comment-dispatch.md) 通过连接器发送精确维护者指令，再独立核对 Actions Run。尚未接入该守卫时，仍用 GitHub UI 派工；**不得未告知就使用用户远程电脑或本地 `gh` 作为替代**。如果用户明确逐次授权其他派工渠道，按授权限定操作并核对返回的 Actions run ID。
 
 ## 4. 交付和正式验收
 
