@@ -33,7 +33,7 @@ def guard_script():
 MOCK_GH = r"""#!/usr/bin/env python3
 import json, os, sys
 endpoint = sys.argv[2] if len(sys.argv) > 2 else ""
-event = json.load(open(os.environ["EVENT_PATH"], encoding="utf-8"))
+event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
 scenario = json.loads(os.environ.get("SCENARIO", "{}"))
 if endpoint.endswith("/branches/dev"):
     print("dev")
@@ -116,7 +116,9 @@ class IssueCommentGuardTests(unittest.TestCase):
                 "ENROLLED": "true",
                 "ENGINEERING_BASE": "dev",
                 "EVENT_NAME": "workflow_dispatch" if manual else "issue_comment",
-                "EVENT_PATH": str(event_path),
+                "GITHUB_EVENT_PATH": str(event_path),
+                # Reproduce the broken Actions expression: it must never be used.
+                "EVENT_PATH": "",
                 "ACTOR": "maintainer",
                 "DISPATCH_ISSUE_NUMBER": "42",
                 "DISPATCH_MODEL": "deepseek-v4.1-flash-free",
@@ -237,6 +239,23 @@ class IssueCommentGuardTests(unittest.TestCase):
         self.assertNotIn("author_association", lock)
         worker = source.split("\n  worker:\n", 1)[1]
         self.assertNotIn("\n    concurrency:\n", worker)
+
+    def test_runner_event_path_is_required_not_expression_mapping(self):
+        source = TEMPLATE.read_text(encoding="utf-8")
+        self.assertNotIn("github.event_path", source)
+        self.assertNotIn("EVENT_PATH: ${{", source)
+        self.assertIn("${GITHUB_EVENT_PATH:?Missing runner-provided GitHub event payload path}", source)
+        # The mock keeps legacy EVENT_PATH empty, just like the failed Actions run.
+        rc, out, err = self.run_guard()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("issue_number=42\\n", out)
+        rc, out, _ = self.run_guard(GITHUB_EVENT_PATH="")
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn("issue_number=", out)
+        # Manual dispatch has no reason to parse an Issue comment event file.
+        rc, out, err = self.run_guard(manual=True, GITHUB_EVENT_PATH="")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("issue_number=42\\n", out)
 
     def test_event_registration_and_immutable_engine(self):
         source = TEMPLATE.read_text(encoding="utf-8")
