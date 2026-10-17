@@ -33,7 +33,9 @@ def guard_script():
 MOCK_GH = r"""#!/usr/bin/env python3
 import json, os, sys
 endpoint = sys.argv[2] if len(sys.argv) > 2 else ""
-event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+# Branch existence checks work in manual dispatch even without an event file.
+event = json.load(open(event_path, encoding="utf-8")) if event_path else {}
 scenario = json.loads(os.environ.get("SCENARIO", "{}"))
 if endpoint.endswith("/branches/dev"):
     print("dev")
