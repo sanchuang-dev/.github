@@ -10,7 +10,7 @@ The opt-in `.github/workflows/sanchuang-free-worker-v2.yml` is a **new**, indepe
 - Uses pinned official OpenCode CLI `2.0.24` via `https://opencode.ai/v2/install`.
 - Worker Job 的 GitHub Actions 总时限由 30 分钟提升为 **60 分钟**；独立 `verify`（20 分钟）与 `delivery`（10 分钟）保持各自限制。这是 Worker 作业上限，**不是**保证模型有整整 60 分钟，也不是端到端总时限。
 - 安装组织级 `browser-verification` Skill（与 `execute-work-item` 来自同一个经过解析的 Organization `main` commit）；只有在 Issue 要求浏览器验收时加载，优先成熟浏览器工具与原生命令，CDP 只使用完整 `webSocketDebuggerUrl`，限定重试和时间，不自动放宽验收。
-- Worker 通过组织受信 `scripts/worker-live-logger.py` 运行 OpenCode：每 **45 秒**在 Actions 中打印运行时长、模型进程状态、输出是否活跃、工具活动类别及 180 秒无输出告警。活动类别来自 CLI 输出，仅供观察，**不构成实际改动或测试通过的证明**。
+- Worker 通过按 **Git Blob SHA `2e1f5f294aa86f2fb1e22282c399b5bd9b30ab4c` 不可变加载并核验**的受信 `scripts/worker-live-logger.py` 运行 OpenCode（禁止从可移动 `main` 执行此脚本）：每 **45 秒**在 Actions 中打印运行时长、模型进程状态、输出是否活跃、工具活动类别及 180 秒无输出告警。活动类别来自 CLI 输出，仅供观察，**不构成实际改动或测试通过的证明**。
 - GitHub Actions 不再直接打印未经审查的模型原始输出。原始输出只临时保存在只读 Worker Runner 内；14 天 Artifact 保留脱敏 `worker-progress.jsonl`、有限的摘要和原有受限元数据，不上传原始提示词、工具参数/结果。GitHub CLI/API 可能要等作业结束后才能下载完整日志，实时观察以 Actions 页面内输出为准。
 
 - Default `opencode/mimo-v2.6-flash-free`; explicit alternate `opencode/deepseek-v4.1-flash-free`; allowlist checked against official model catalog before invocation. Provider availability is **not guaranteed**, and a catalog entry is not proof of a successful inference. No paid fallback or custom endpoint/header impersonation.
