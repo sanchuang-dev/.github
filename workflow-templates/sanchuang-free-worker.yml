@@ -29,7 +29,7 @@ permissions:
 jobs:
   enrollment:
     # For issue_comment the event always runs at the default branch.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issue_comment' && github.event.action == 'created')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issue_comment' && github.event.action == 'created' && startsWith(github.event.comment.body, '/free-worker'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
