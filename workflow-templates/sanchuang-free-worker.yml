@@ -26,6 +26,13 @@ on:
 permissions:
   contents: read
 
+# This lock covers the ENTIRE run: a queued directive is validated only AFTER
+# the prior dispatch finishes. Never validate authorization before queueing.
+# The group is identical for comment and manual dispatches of the same Issue.
+concurrency:
+  group: free-worker-${{ github.repository }}-${{ github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
 jobs:
   enrollment:
     # For issue_comment the event always runs at the default branch.
@@ -145,10 +152,6 @@ jobs:
 
   worker:
     needs: enrollment
-    # Serialise by Issue across comment and manual dispatch attempts.
-    concurrency:
-      group: free-worker-${{ github.repository }}-${{ needs.enrollment.outputs.issue_number }}
-      cancel-in-progress: false
     permissions:
       contents: write
       issues: read
