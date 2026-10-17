@@ -285,7 +285,7 @@ jobs:
             fi
           done
           if find . -type f \( -path '*/execute-work-item/SKILL.md' -o -path '*/browser-verification/SKILL.md' \) -print -quit | grep -q .; then
-            echo "::error::Project-defined execute-work-item Skill could shadow the organization contract." >&2
+            echo "::error::Project-defined Organization Skill could shadow the organization contract." >&2
             exit 1
           fi
           mkdir -p "${HOME}/.config/opencode/skills/execute-work-item"
@@ -348,7 +348,7 @@ jobs:
               {action:"edit",resource:"*",effect:"allow"},
               {action:"skill",resource:"*",effect:"deny"},
               {action:"skill",resource:"execute-work-item",effect:"allow"},
-               {action:"skill",resource:"browser-verification",effect:"allow"},
+              {action:"skill",resource:"browser-verification",effect:"allow"},
               {action:"shell",resource:"*",effect:"allow"},
               {action:"subagent",resource:"*",effect:"deny"},
               {action:"webfetch",resource:"*",effect:"allow"},
