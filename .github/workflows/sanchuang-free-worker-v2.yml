@@ -261,9 +261,13 @@ jobs:
           gh api "repos/sanchuang-dev/.github/contents/skills/browser-verification/SKILL.md?ref=${policy_revision}" \
             --jq '.content' | tr -d '\n' | base64 --decode \
             > "${HOME}/.agents/skills/browser-verification/SKILL.md"
-          gh api "repos/sanchuang-dev/.github/contents/scripts/worker-live-logger.py?ref=${policy_revision}" \
+          # Executable helper MUST be pinned by immutable Git blob SHA, not the
+          # moving Organization main ref used for non-executable policies/Skills.
+          gh api "repos/sanchuang-dev/.github/git/blobs/2e1f5f294aa86f2fb1e22282c399b5bd9b30ab4c" \
             --jq '.content' | tr -d '\n' | base64 --decode \
             > "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py"
+          test "$(git hash-object "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py")" = \
+            "2e1f5f294aa86f2fb1e22282c399b5bd9b30ab4c"
           python3 -m py_compile "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py"
 
           test -s "${RUNNER_TEMP}/sanchuang-worker/org-AGENTS.md"
