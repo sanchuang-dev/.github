@@ -1,0 +1,978 @@
+name: Sanchuang Paid External Worker (OpenCode Go)
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: Open GitHub Issue number that owns the work
+        required: true
+        type: number
+      base_branch:
+        description: Explicit delivery base branch
+        required: true
+        type: string
+      verification_command:
+        description: Trusted repository-owned verification command
+        required: true
+        type: string
+      provider:
+        description: Run-scoped OpenCode provider identifier
+        required: false
+        type: string
+        default: opencode-go
+      model:
+        description: Run-scoped model identifier
+        required: false
+        type: string
+        default: deepseek-v4.1-flash
+      provider_profile:
+        description: Optional provider profile from the frozen Organization registry
+        required: false
+        type: string
+        default: ''
+      provider_registry_ref:
+        description: Immutable 40-character .github commit SHA containing the provider registry
+        required: false
+        type: string
+        default: ''
+    secrets:
+      opencode_go_api_key:
+        description: OpenCode Go API key, only sent to the model runner
+        required: true
+    outputs:
+      worker_branch:
+        description: Isolated worker branch created from the explicit base
+        value: ${{ jobs.worker.outputs.worker_branch }}
+      pull_request_url:
+        description: Draft pull request URL when the run succeeds
+        value: ${{ jobs.delivery.outputs.pull_request_url }}
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    # No write-capable Github token is available in the model's Runner.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      worker_branch: ${{ steps.identity.outputs.worker_branch }}
+      base_sha: ${{ steps.identity.outputs.base_sha }}
+      model_route: ${{ steps.provider.outputs.model_route }}
+      patch_artifact_name: ${{ steps.identity.outputs.patch_artifact_name }}
+
+    steps:
+      - name: Validate Sanchuang caller and work item
+        id: validate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+
+          test "${GITHUB_REPOSITORY_OWNER}" = "sanchuang-dev"
+
+          # The local caller may be modified on a dispatch-selected branch.
+          # Enforce this boundary again inside the immutable Organization engine
+          # before any model is installed/run or a later write-token job is eligible.
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          test -n "$default_branch"
+          if test "$GITHUB_REF" != "refs/heads/$default_branch"; then
+            echo "::error::Free Worker requires dispatch from the repository default branch." >&2
+            exit 1
+          fi
+          default_sha="$(gh api "repos/${GITHUB_REPOSITORY}/branches/$default_branch" --jq '.commit.sha')"
+          test -n "$default_sha"
+          if test "$GITHUB_SHA" != "$default_sha"; then
+            echo "::error::Dispatch commit is not the current default-branch tip; rerun from the reviewed default branch." >&2
+            exit 1
+          fi
+
+          issue_json="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}")"
+          test "$(jq -r '.state' <<< "$issue_json")" = "open"
+
+          if jq -e '.pull_request != null' <<< "$issue_json" >/dev/null; then
+            echo "Issue #${ISSUE_NUMBER} resolves to a pull request, not a work-item Issue." >&2
+            exit 1
+          fi
+
+          mkdir -p "${RUNNER_TEMP}/sanchuang-worker"
+          printf '%s\n' "$issue_json" > "${RUNNER_TEMP}/sanchuang-worker/issue.json"
+
+          comments_pages="${RUNNER_TEMP}/sanchuang-worker/issue-comments-pages.json"
+          comments_json="${RUNNER_TEMP}/sanchuang-worker/issue-comments.json"
+          trusted_comments="${RUNNER_TEMP}/sanchuang-worker/maintainer-comments.json"
+          trusted_logins="${RUNNER_TEMP}/sanchuang-worker/trusted-commenters.txt"
+
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments?per_page=100" > "$comments_pages"
+          jq '[.[][]]' "$comments_pages" > "$comments_json"
+          : > "$trusted_logins"
+
+          while IFS= read -r login; do
+            test -n "$login" || continue
+
+            user_type="$(jq -r --arg login "$login" '[.[] | select(.user.login == $login) | .user.type][0] // ""' "$comments_json")"
+            test "$user_type" != "Bot" || continue
+
+            if permission_json="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" 2>/dev/null)"; then
+              permission="$(jq -r '.permission // ""' <<< "$permission_json")"
+            else
+              echo "::warning::Ignoring Issue comments from @${login}: repository permission could not be verified."
+              continue
+            fi
+
+            case "$permission" in
+              admin|maintain|write)
+                printf '%s\n' "$login" >> "$trusted_logins"
+                ;;
+            esac
+          done < <(jq -r '.[].user.login' "$comments_json" | sort -u)
+
+          jq --rawfile trusted "$trusted_logins" '
+            ($trusted | split("\n") | map(select(length > 0))) as $trusted_logins
+            | [
+                .[]
+                | select(.user.type != "Bot")
+                | select(.user.login as $login | ($trusted_logins | index($login)) != null)
+                | {
+                    id,
+                    author: .user.login,
+                    created_at,
+                    body: (.body // "")
+                  }
+              ]
+            | sort_by(.created_at, .id)
+          ' "$comments_json" > "$trusted_comments"
+
+      - name: Checkout explicit delivery base
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Establish immutable execution identity
+        id: identity
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set -euo pipefail
+
+          git check-ref-format "refs/heads/${BASE_BRANCH}"
+
+          base_sha="$(git rev-parse HEAD)"
+          worker_branch="feat/worker-${ISSUE_NUMBER}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git check-ref-format --branch "$worker_branch"
+
+          git switch -c "$worker_branch"
+
+          maintainer_comment_count="$(jq 'length' "${RUNNER_TEMP}/sanchuang-worker/maintainer-comments.json")"
+
+          run_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          cat > "${RUNNER_TEMP}/sanchuang-worker/identity.txt" <<EOF
+          run_id=${GITHUB_RUN_ID}
+          run_attempt=${GITHUB_RUN_ATTEMPT}
+          run_started_at=${run_started_at}
+          repository=${GITHUB_REPOSITORY}
+          issue=${ISSUE_NUMBER}
+          base_branch=${BASE_BRANCH}
+          base_sha=${base_sha}
+          worker_branch=${worker_branch}
+          opencode_version=2.0.24
+          trusted_maintainer_comments=${maintainer_comment_count}
+          EOF
+
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "worker_branch=$worker_branch" >> "$GITHUB_OUTPUT"
+          echo "patch_artifact_name=sanchuang-paid-patch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve fixed paid OpenCode Go model
+        id: provider
+        shell: bash
+        env:
+          REQUESTED_PROVIDER: ${{ inputs.provider }}
+          REQUESTED_MODEL: ${{ inputs.model }}
+          PROVIDER_PROFILE: ${{ inputs.provider_profile }}
+          PROVIDER_REGISTRY_REF: ${{ inputs.provider_registry_ref }}
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/sanchuang-worker"
+          provider="${REQUESTED_PROVIDER:-opencode-go}"
+          model="${REQUESTED_MODEL:-deepseek-v4.1-flash}"
+          if test "$provider" != "opencode-go" || test "$model" != "deepseek-v4.1-flash" || test -n "${PROVIDER_PROFILE:-}" || test -n "${PROVIDER_REGISTRY_REF:-}"; then
+            echo "::error::Paid Worker permits only opencode-go/deepseek-v4.1-flash, without custom profiles." >&2
+            exit 1
+          fi
+          # No silent free/paid fallback. Actual entitlement is checked at inference time.
+          model_route="opencode-go/$model"
+          jq -cn --arg model "$model" --arg model_route "$model_route" '{provider:"opencode-go",model:$model,model_route:$model_route,provider_profile:"",provider_registry_ref:"native-opencode-go",provider_registry_sha:"none",provider_config:{}}' > "$root/provider-route.json"
+          {
+            echo "provider=opencode-go"
+            echo "model=$model"
+            echo "model_route=$model_route"
+            echo "provider_profile="
+            echo "provider_registry_ref=native-opencode-go"
+            echo "provider_registry_sha=none"
+          } >> "$root/identity.txt"
+          {
+            echo "provider=opencode-go"
+            echo "model=$model"
+            echo "model_route=$model_route"
+            echo "provider_profile="
+            echo "provider_registry_ref=native-opencode-go"
+            echo "provider_registry_sha=none"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Load current Organization policy and pinned Skill
+        id: policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${HOME}/.agents/skills/execute-work-item" "${HOME}/.agents/skills/browser-verification"
+
+          # Public Organization policy repository: caller-scoped GitHub token is
+          # sufficient for read-only fetches. Never pass it to the model.
+          test -n "${GH_TOKEN:-}" || { echo "::error::GitHub token is unavailable."; exit 1; }
+          policy_revision="$(gh api "repos/sanchuang-dev/.github/commits/main" --jq '.sha')"
+          test -n "$policy_revision"
+          printf 'skill_commit=%s\n' "$policy_revision" >> "${RUNNER_TEMP}/sanchuang-worker/identity.txt"
+
+          gh api "repos/sanchuang-dev/.github/contents/AGENTS.md?ref=${policy_revision}"             --jq '.content'             | tr -d '\n'             | base64 --decode             > "${RUNNER_TEMP}/sanchuang-worker/org-AGENTS.md"
+
+          gh api "repos/sanchuang-dev/.github/contents/skills/execute-work-item/SKILL.md?ref=${policy_revision}"             --jq '.content'             | tr -d '\n'             | base64 --decode             > "${HOME}/.agents/skills/execute-work-item/SKILL.md"
+          gh api "repos/sanchuang-dev/.github/contents/skills/browser-verification/SKILL.md?ref=${policy_revision}" \
+            --jq '.content' | tr -d '\n' | base64 --decode \
+            > "${HOME}/.agents/skills/browser-verification/SKILL.md"
+          # Executable helper MUST be pinned by immutable Git blob SHA, not the
+          # moving Organization main ref used for non-executable policies/Skills.
+          gh api "repos/sanchuang-dev/.github/git/blobs/2e1f5f294aa86f2fb1e22282c399b5bd9b30ab4c" \
+            --jq '.content' | tr -d '\n' | base64 --decode \
+            > "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py"
+          test "$(git hash-object "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py")" = \
+            "2e1f5f294aa86f2fb1e22282c399b5bd9b30ab4c"
+          python3 -m py_compile "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py"
+
+          test -s "${RUNNER_TEMP}/sanchuang-worker/org-AGENTS.md"
+          test -s "${HOME}/.agents/skills/execute-work-item/SKILL.md"
+          test -s "${HOME}/.agents/skills/browser-verification/SKILL.md"
+          test -s AGENTS.md
+          # Project/config Skill sources can shadow Organization's pinned Skill.
+          # Refuse them before giving the model any edit/tool authority.
+          for local_config in opencode.json opencode.jsonc .opencode.json .opencode.jsonc; do
+            if test -e "$local_config" || test -L "$local_config"; then
+              echo "::error::Free Worker refuses repository OpenCode config: $local_config" >&2
+              exit 1
+            fi
+          done
+          for local_source in .opencode .agents .claude; do
+            if test -e "$local_source" || test -L "$local_source"; then
+              echo "::error::Free Worker refuses repository Skill source: $local_source" >&2
+              exit 1
+            fi
+          done
+          if find . -type f \( -path '*/execute-work-item/SKILL.md' -o -path '*/browser-verification/SKILL.md' \) -print -quit | grep -q .; then
+            echo "::error::Project-defined Organization Skill could shadow the organization contract." >&2
+            exit 1
+          fi
+          mkdir -p "${HOME}/.config/opencode/skills/execute-work-item"
+          cp "${HOME}/.agents/skills/execute-work-item/SKILL.md" \
+            "${HOME}/.config/opencode/skills/execute-work-item/SKILL.md"
+          cmp -s "${HOME}/.agents/skills/execute-work-item/SKILL.md" \
+            "${HOME}/.config/opencode/skills/execute-work-item/SKILL.md"
+          mkdir -p "${HOME}/.config/opencode/skills/browser-verification"
+          cp "${HOME}/.agents/skills/browser-verification/SKILL.md" \
+            "${HOME}/.config/opencode/skills/browser-verification/SKILL.md"
+          cmp -s "${HOME}/.agents/skills/browser-verification/SKILL.md" \
+            "${HOME}/.config/opencode/skills/browser-verification/SKILL.md"
+
+      - name: Install pinned OpenCode CLI
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://opencode.ai/v2/install | bash -s -- --version 2.0.24
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - name: Verify OpenCode version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(opencode --version)" = "opencode v2.0.24"
+
+      - name: Run bounded external Worker
+        id: worker
+        shell: bash
+        env:
+          PROVIDER: ${{ steps.provider.outputs.provider }}
+          MODEL_ROUTE: ${{ steps.provider.outputs.model_route }}
+          OPENCODE_GO_API_KEY: ${{ secrets.opencode_go_api_key }}
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          OPENCODE_DISABLE_LSP_DOWNLOAD: "1"
+          NO_COLOR: "1"
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+
+          route="${RUNNER_TEMP}/sanchuang-worker/provider-route.json"
+          test -s "$route"
+
+          test "$PROVIDER" = "opencode-go"
+          if test -z "${OPENCODE_GO_API_KEY:-}"; then
+            echo "::error::Missing paid OpenCode Go API key." >&2
+            exit 1
+          fi
+          # OpenCode V2's native Go provider reads OPENCODE_API_KEY.
+          # Only this read-only model job receives the credential.
+          export OPENCODE_API_KEY="$OPENCODE_GO_API_KEY"
+          unset OPENCODE_GO_API_KEY PROVIDER_API_KEY OPENCODE_AUTH_CONTENT
+          unset OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_DEFAULT_PLUGINS
+
+          export OPENCODE_CONFIG_CONTENT
+          OPENCODE_CONFIG_CONTENT="$(jq -cn '{
+            share:"disabled",
+            permissions:[
+              {action:"read",resource:"*",effect:"allow"},
+              {action:"read",resource:"*.env*",effect:"deny"},
+              {action:"glob",resource:"*",effect:"allow"},
+              {action:"grep",resource:"*",effect:"allow"},
+              {action:"edit",resource:"*",effect:"allow"},
+              {action:"skill",resource:"*",effect:"deny"},
+              {action:"skill",resource:"execute-work-item",effect:"allow"},
+              {action:"skill",resource:"browser-verification",effect:"allow"},
+              {action:"shell",resource:"*",effect:"allow"},
+              {action:"subagent",resource:"*",effect:"deny"},
+              {action:"webfetch",resource:"*",effect:"allow"},
+              {action:"websearch",resource:"*",effect:"allow"},
+              {action:"external_directory",resource:"*",effect:"deny"},
+              {action:"execute",resource:"*",effect:"deny"}
+            ]
+          }')"
+
+          issue_title="$(jq -r '.title' "${RUNNER_TEMP}/sanchuang-worker/issue.json")"
+          issue_body="$(jq -r '.body // ""' "${RUNNER_TEMP}/sanchuang-worker/issue.json")"
+          maintainer_amendments="$(jq -r '
+            if length == 0 then
+              "(none)"
+            else
+              map(
+                "COMMENT #\(.id) by @\(.author) at \(.created_at)\n\(.body)"
+              )
+              | join("\n\n---\n\n")
+            end
+          ' "${RUNNER_TEMP}/sanchuang-worker/maintainer-comments.json")"
+          org_policy="$(cat "${RUNNER_TEMP}/sanchuang-worker/org-AGENTS.md")"
+
+          cat > "${RUNNER_TEMP}/sanchuang-worker/prompt.txt" <<PROMPT
+          You are the implementation Worker for exactly one explicitly authorized Sanchuang engineering work item.
+
+          Control hierarchy for this run:
+          1. The maintainer authorized implementation of the assigned Issue.
+          2. The current Sanchuang Organization policy below applies.
+          3. The repository root AGENTS.md in the checked-out workspace applies.
+          4. The execute-work-item Skill is installed and MUST be loaded with OpenCode's native skill tool before editing. The browser-verification Skill is also installed and MUST be loaded before browser/screenshots/interaction checks.
+          5. The exact GitHub Issue title/body below is the base work-item contract.
+          6. Trusted maintainer follow-up comments below are chronological follow-up context. A comment is eligible only when its author is a human account with current repository write, maintain, or admin permission; bot and ordinary-user comments are excluded. Only an eligible comment that explicitly clarifies, revises, returns, narrows, or otherwise changes the work item acts as a contract amendment. Status/evidence/conversational comments do not change the contract. When explicit amendments conflict, later trusted amendments override earlier trusted amendments and the conflicting part of the base Issue contract. The loaded execute-work-item Skill defines the full amendment semantics; apply it.
+
+          Immutable execution identity:
+          - repository: ${GITHUB_REPOSITORY}
+          - issue: #${ISSUE_NUMBER}
+          - delivery base: ${BASE_BRANCH}
+          - base SHA: ${BASE_SHA}
+
+          Important execution constraints:
+          - Work only on this Issue.
+          - Only supplied eligible trusted maintainer follow-up comments (human authors with current repository write, maintain, or admin permission) can amend the Issue contract, and only when their wording explicitly changes or clarifies the work item. Ordinary acknowledgements, status notes, evidence chatter, or conversational comments do not amend it.
+          - Other Issue comments are deliberately excluded and have no authority in this run.
+          - Explicit trusted amendments can change implementation scope/acceptance within this Issue, but they do not expand this Worker's authority to merge, close/reopen Issues, release, deploy, or promote environments.
+          - Read repository AGENTS.md before editing.
+          - Load execute-work-item before editing. For browser checks, load browser-verification before starting a browser and follow its bounded verification guidance.
+          - Repository read/search/edit/write and shell/terminal are allowed on this ephemeral GitHub-hosted runner for inspecting the code, installing dependencies, running tests/builds, and local debugging. Record commands and results truthfully.
+          - Shell/network permission is not authority to push, create/merge PRs, modify unrelated repository or workflow files, deploy, or change secrets. Do not read, log, transmit, or persist credentials/tokens from environment or configuration, including via outbound network requests. Trusted post-run verification and GitHub delivery steps remain authoritative.
+          - Web fetch/search and ordinary internet requests are allowed for project documentation, dependencies, research, and implementation. No artificial request-count or usage quota is imposed by this Worker workflow; external service limits, provider availability, and GitHub-hosted runner limits still apply.
+          - Subagents and GitHub mutations are unavailable to the Worker as dedicated tools.
+          - Do not create commits, branches, pull requests, Issues, releases, or environment promotions.
+          - You may run tests, builds, and diagnostics in the Worker runner and report their exact results. The separate trusted post-run verification is still required; your own passing tests do not replace it.
+          - If the Issue cannot be implemented safely without a maintainer decision or broader scope, make no speculative workaround and report the blocker.
+          - Make the smallest coherent change that satisfies the Issue contract.
+          - Use only the authorized OpenCode Go paid model; never change provider, model or fall back to another route.
+          - End with a concise handoff listing changed surfaces, reasoning, and any validation gap.
+
+          CURRENT_SANCHUANG_ORGANIZATION_POLICY
+          ${org_policy}
+
+          ASSIGNED_ISSUE_BASE_CONTRACT
+          Title: ${issue_title}
+
+          ${issue_body}
+
+          TRUSTED_MAINTAINER_FOLLOW_UP
+          ${maintainer_amendments}
+          PROMPT
+
+          opencode session list --max-count 50 --format json > "${RUNNER_TEMP}/sanchuang-worker/sessions-before.json" 2>/dev/null || printf '[]\n' > "${RUNNER_TEMP}/sanchuang-worker/sessions-before.json"
+
+          # A trusted supervisor emits content-free progress and regular heartbeats.
+          # Full OpenCode output remains runner-local, not public Actions log data.
+          set +e
+          python3 "${RUNNER_TEMP}/sanchuang-worker/worker-live-logger.py" \
+            --model "$MODEL_ROUTE" \
+            --title "Sanchuang external Worker #${ISSUE_NUMBER}" \
+            --prompt-file "${RUNNER_TEMP}/sanchuang-worker/prompt.txt" \
+            --root "${RUNNER_TEMP}/sanchuang-worker" \
+            --heartbeat-seconds 45
+          worker_rc="$?"
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path(__import__("os").environ["RUNNER_TEMP"]) / "sanchuang-worker"
+          # Upload allowlisted telemetry only; no raw model/tool output.
+          src = root / "worker-progress.jsonl"
+          raw = root / "worker-output.raw"
+          dst = root / "worker-output.txt"
+          limit = 120_000
+          data = src.read_bytes() if src.exists() else b""
+          truncated = len(data) > limit
+          dst.write_bytes(data[:limit] + (b"\n[truncated]\n" if truncated else b""))
+          (root / "worker-output-meta.json").write_text(
+              __import__("json").dumps({
+                  "bytes": len(data), "limit_bytes": limit, "truncated": truncated,
+                  "format": "redacted_progress_jsonl",
+                  "raw_output_bytes_runner_only": raw.stat().st_size if raw.exists() else 0,
+              }) + "\n"
+          )
+          PY
+
+          opencode session list --max-count 50 --format json > "${RUNNER_TEMP}/sanchuang-worker/sessions-after.json" 2>/dev/null || printf '[]\n' > "${RUNNER_TEMP}/sanchuang-worker/sessions-after.json"
+
+          export OPENCODE_SESSION_ID
+          OPENCODE_SESSION_ID="$(python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
+
+          def ids(path):
+              try:
+                  value = json.loads(path.read_text())
+              except Exception:
+                  return []
+              if isinstance(value, dict):
+                  value = value.get("sessions", value.get("data", []))
+              if not isinstance(value, list):
+                  return []
+              out = []
+              for item in value:
+                  if not isinstance(item, dict):
+                      continue
+                  sid = item.get("id") or item.get("sessionID") or item.get("session_id")
+                  if isinstance(sid, str):
+                      out.append(sid)
+              return out
+
+          before = set(ids(root / "sessions-before.json"))
+          after = ids(root / "sessions-after.json")
+          fresh = [sid for sid in after if sid not in before]
+          print((fresh or after or [""])[0])
+          PY
+          )"
+
+          if test -n "$OPENCODE_SESSION_ID"; then
+            if opencode export "$OPENCODE_SESSION_ID" --sanitize > "${RUNNER_TEMP}/sanchuang-worker/session-export.json" 2>/dev/null \
+              || opencode session export "$OPENCODE_SESSION_ID" --sanitize > "${RUNNER_TEMP}/sanchuang-worker/session-export.json" 2>/dev/null; then
+              python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
+          src = root / "session-export.json"
+          out = root / "trajectory.jsonl"
+          summary = root / "session-summary.json"
+          limit_events = 500
+
+          try:
+              data = json.loads(src.read_text(errors="replace"))
+          except Exception as exc:
+              summary.write_text(json.dumps({"available": False, "error": type(exc).__name__}) + "\n")
+              out.write_text("")
+              raise SystemExit(0)
+
+          session = data.get("info", {}) if isinstance(data, dict) else {}
+          messages = data.get("messages", []) if isinstance(data, dict) else []
+          if not isinstance(messages, list):
+              messages = []
+
+          events = []
+          for msg in messages:
+              if not isinstance(msg, dict):
+                  continue
+              info = msg.get("info", msg)
+              if not isinstance(info, dict):
+                  info = {}
+              mid = info.get("id")
+              sid = info.get("sessionID") or session.get("id")
+              role = info.get("role")
+              parts = msg.get("parts", info.get("parts", []))
+              if not isinstance(parts, list):
+                  parts = []
+              for part in parts:
+                  if not isinstance(part, dict):
+                      continue
+                  kind = part.get("type")
+                  if kind == "tool":
+                      state = part.get("state", {})
+                      if not isinstance(state, dict):
+                          state = {}
+                      timing = state.get("time", {})
+                      if not isinstance(timing, dict):
+                          timing = {}
+                      events.append({
+                          "kind": "tool",
+                          "session_id": sid,
+                          "message_id": mid,
+                          "role": role,
+                          "tool": part.get("tool") or part.get("toolName"),
+                          "call_id": part.get("callID") or part.get("toolCallId"),
+                          "status": state.get("status") or part.get("state"),
+                          "started_at": timing.get("start"),
+                          "ended_at": timing.get("end"),
+                      })
+                  elif kind in {"step-start", "step-finish", "patch", "retry", "compaction", "subtask"}:
+                      events.append({
+                          "kind": kind,
+                          "session_id": sid,
+                          "message_id": mid,
+                          "role": role,
+                      })
+
+          truncated = len(events) > limit_events
+          events = events[:limit_events]
+          with out.open("w") as fh:
+              for event in events:
+                  fh.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+          summary.write_text(json.dumps({
+              "available": True,
+              "session_id": session.get("id") or os.environ.get("OPENCODE_SESSION_ID"),
+              "event_count": len(events),
+              "event_limit": limit_events,
+              "truncated": truncated,
+              "content_policy": "metadata-only; prompt/text/reasoning/tool inputs/tool outputs omitted",
+          }, separators=(",", ":")) + "\n")
+          PY
+              rm -f "${RUNNER_TEMP}/sanchuang-worker/session-export.json"
+            else
+              printf '{"available":false,"reason":"sanitized_export_unavailable"}\n' > "${RUNNER_TEMP}/sanchuang-worker/session-summary.json"
+              : > "${RUNNER_TEMP}/sanchuang-worker/trajectory.jsonl"
+            fi
+          else
+            printf '{"available":false,"reason":"session_id_unresolved"}\n' > "${RUNNER_TEMP}/sanchuang-worker/session-summary.json"
+            : > "${RUNNER_TEMP}/sanchuang-worker/trajectory.jsonl"
+          fi
+
+          exit "$worker_rc"
+
+      - name: Require a bounded implementation change
+        id: bounded
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff HEAD --quiet && test -z "$(git ls-files --others --exclude-standard)"; then
+            echo "Worker produced no implementation changes." >&2
+            exit 1
+          fi
+
+          git diff HEAD --check
+
+      - name: Package model output before independent verification
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git -c core.hooksPath=/dev/null diff --cached --check
+          patch="${RUNNER_TEMP}/sanchuang-worker/implementation.patch"
+          git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
+          test -s "$patch"
+          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+          sha256sum "$patch" | awk '{print $1}' > "${RUNNER_TEMP}/sanchuang-worker/patch.sha256"
+
+      - name: Upload verified patch as data for a fresh delivery runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.identity.outputs.patch_artifact_name }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/implementation.patch
+            ${{ runner.temp }}/sanchuang-worker/patch.sha256
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Finalize structured Worker evidence
+        id: evidence
+        if: always()
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
+          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
+          PR_URL: ""
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+          REQUESTED_PROVIDER: ${{ inputs.provider }}
+          REQUESTED_MODEL: ${{ inputs.model }}
+          REQUESTED_PROVIDER_PROFILE: ${{ inputs.provider_profile }}
+          REQUESTED_PROVIDER_REGISTRY_REF: ${{ inputs.provider_registry_ref }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          IDENTITY_OUTCOME: ${{ steps.identity.outcome }}
+          PROVIDER_OUTCOME: ${{ steps.provider.outcome }}
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          VERSION_OUTCOME: ${{ steps.version.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker.outcome }}
+          BOUNDED_OUTCOME: ${{ steps.bounded.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          root="${RUNNER_TEMP}/sanchuang-worker"
+          mkdir -p "$root"
+
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git status --short > "$root/changed-files.txt" || true
+            if test -n "${BASE_SHA:-}" && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git diff --name-status "${BASE_SHA}"...HEAD > "$root/committed-files.txt" || true
+              git diff --stat "${BASE_SHA}"...HEAD > "$root/diff-stat.txt" || true
+            else
+              git diff --name-status > "$root/committed-files.txt" || true
+              git diff --stat > "$root/diff-stat.txt" || true
+            fi
+          fi
+
+          export TERMINAL_STATUS FAILURE_STAGE
+          read -r TERMINAL_STATUS FAILURE_STAGE < <(python3 - <<'PY'
+          import os
+          stages = [
+              ("validate", os.getenv("VALIDATE_OUTCOME")),
+              ("checkout", os.getenv("CHECKOUT_OUTCOME")),
+              ("identity", os.getenv("IDENTITY_OUTCOME")),
+              ("provider", os.getenv("PROVIDER_OUTCOME")),
+              ("policy", os.getenv("POLICY_OUTCOME")),
+              ("install", os.getenv("INSTALL_OUTCOME")),
+              ("version", os.getenv("VERSION_OUTCOME")),
+              ("worker", os.getenv("WORKER_OUTCOME")),
+              ("bounded_change", os.getenv("BOUNDED_OUTCOME")),
+              ("patch_package", os.getenv("PACKAGE_OUTCOME")),
+          ]
+          failed = next((name for name, outcome in stages if outcome == "failure"), "")
+          terminal = "failure" if failed else ("success" if all(outcome in {"success", "skipped"} for _, outcome in stages) else "incomplete")
+          print(terminal, failed or "none")
+          PY
+          )
+
+          export RUN_ENDED_AT
+          RUN_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export COMMIT_SHA
+          COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
+          identity = {}
+          p = root / "identity.txt"
+          if p.exists():
+              for line in p.read_text(errors="replace").splitlines():
+                  if "=" in line:
+                      k, v = line.split("=", 1)
+                      identity[k.strip()] = v.strip()
+
+          stages = {
+              "validate": os.getenv("VALIDATE_OUTCOME"),
+              "checkout": os.getenv("CHECKOUT_OUTCOME"),
+              "identity": os.getenv("IDENTITY_OUTCOME"),
+              "provider": os.getenv("PROVIDER_OUTCOME"),
+              "policy": os.getenv("POLICY_OUTCOME"),
+              "install": os.getenv("INSTALL_OUTCOME"),
+              "version": os.getenv("VERSION_OUTCOME"),
+              "worker": os.getenv("WORKER_OUTCOME"),
+              "bounded_change": os.getenv("BOUNDED_OUTCOME"),
+              "patch_package": os.getenv("PACKAGE_OUTCOME"),
+          }
+
+          session = {}
+          sp = root / "session-summary.json"
+          if sp.exists():
+              try:
+                  session = json.loads(sp.read_text())
+              except Exception:
+                  session = {"available": False, "reason": "invalid_session_summary"}
+
+          payload = {
+              "schema_version": 1,
+              "run_id": identity.get("run_id") or os.getenv("GITHUB_RUN_ID"),
+              "run_attempt": identity.get("run_attempt") or os.getenv("GITHUB_RUN_ATTEMPT"),
+              "repository": os.getenv("GITHUB_REPOSITORY"),
+              "issue_number": int(os.getenv("ISSUE_NUMBER")) if os.getenv("ISSUE_NUMBER") else None,
+              "base_branch": os.getenv("BASE_BRANCH"),
+              "base_sha": os.getenv("BASE_SHA") or identity.get("base_sha"),
+              "worker_branch": os.getenv("WORKER_BRANCH") or identity.get("worker_branch"),
+              "opencode_version": identity.get("opencode_version", "2.0.24"),
+              "requested_provider": os.getenv("REQUESTED_PROVIDER") or "opencode-go",
+              "requested_provider_profile": os.getenv("REQUESTED_PROVIDER_PROFILE") or None,
+              "requested_provider_registry_ref": os.getenv("REQUESTED_PROVIDER_REGISTRY_REF") or None,
+              "requested_model": os.getenv("REQUESTED_MODEL") or "deepseek-v4.1-flash",
+              "provider": identity.get("provider"),
+              "provider_profile": identity.get("provider_profile") or None,
+              "provider_registry_ref": identity.get("provider_registry_ref"),
+              "provider_registry_sha": identity.get("provider_registry_sha"),
+              "model": identity.get("model"),
+              "model_route": identity.get("model_route"),
+              "skill_commit": identity.get("skill_commit"),
+              "started_at": identity.get("run_started_at"),
+              "ended_at": os.getenv("RUN_ENDED_AT"),
+              "terminal_status": "ready_for_verification" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
+              "failure_stage": os.getenv("FAILURE_STAGE"),
+              "stages": stages,
+              "session": session,
+              "commit_sha": None, # trusted delivery in a separate runner
+              "draft_pr_url": os.getenv("PR_URL") or None,
+              "verification": {
+                  "command": (os.getenv("VERIFICATION_COMMAND") or "")[:4000],
+                  "outcome": "pending_independent_verification",
+              },
+              "artifact_retention_days": 14,
+              "safety": {
+                  "raw_environment_persisted": False,
+                  "provider_credentials_persisted": False,
+                  "provider_config_run_scoped": True,
+                  "github_token_persisted": False,
+                  "session_content_policy": "metadata-only trajectory; sanitized export removed after extraction",
+                  "worker_output_limit_bytes": 120000,
+                  "verification_output_limit_bytes": 120000,
+              },
+          }
+          (root / "worker-run.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Upload Worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-external-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/worker-run.json
+            ${{ runner.temp }}/sanchuang-worker/trajectory.jsonl
+            ${{ runner.temp }}/sanchuang-worker/session-summary.json
+            ${{ runner.temp }}/sanchuang-worker/worker-output.txt
+            ${{ runner.temp }}/sanchuang-worker/worker-progress.jsonl
+            ${{ runner.temp }}/sanchuang-worker/worker-output-meta.json
+            ${{ runner.temp }}/sanchuang-worker/verification.log
+            ${{ runner.temp }}/sanchuang-worker/verification-meta.json
+            ${{ runner.temp }}/sanchuang-worker/changed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/committed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/diff-stat.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  verify:
+    # Exact patch is rehydrated and independently checked before any write token exists.
+    needs: worker
+    if: ${{ needs.worker.result == 'success' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      patch_sha256: ${{ steps.apply.outputs.patch_sha256 }}
+    steps:
+      - name: Checkout frozen base on separate read-only runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact implementation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch
+
+      - name: Apply immutable patch for independent verification
+        id: apply
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          evidence="${RUNNER_TEMP}/sanchuang-verified-patch"
+          patch="$evidence/implementation.patch"
+          test -s "$patch"
+          test -s "$evidence/patch.sha256"
+          hash="$(sha256sum "$patch" | awk '{print $1}')"
+          test "$hash" = "$(cat "$evidence/patch.sha256")"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          echo "patch_sha256=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Run trusted verification against rehydrated patch bytes
+        id: verify
+        shell: bash
+        env:
+          SANCHUANG_VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          test -n "$SANCHUANG_VERIFICATION_COMMAND"
+          log="${RUNNER_TEMP}/sanchuang-verified-patch/verification.raw"
+          set +e
+          {
+            echo "$ $SANCHUANG_VERIFICATION_COMMAND"
+            bash -lc "$SANCHUANG_VERIFICATION_COMMAND"
+          } 2>&1 | tee "$log"
+          verification_rc="${PIPESTATUS[0]}"
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-verified-patch"
+          data = (root / "verification.raw").read_bytes()
+          (root / "verification.log").write_bytes(data[:120_000] + (b"\\n[truncated]\\n" if len(data) > 120_000 else b""))
+          PY
+          patch="${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          # Verification must not silently mutate the exact staged source snapshot.
+          git -c core.hooksPath=/dev/null apply --reverse --check --index "$patch"
+          git diff --quiet
+          exit "$verification_rc"
+
+      - name: Upload independently verified evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-paid-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch/verification.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  delivery:
+    # A separate fresh runner, with no model process or modified Git hooks.
+    needs: [worker, verify]
+    if: ${{ needs.worker.result == 'success' && needs.verify.result == 'success' }}
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pull_request_url: ${{ steps.pr.outputs.url }}
+    steps:
+      - name: Checkout frozen trusted base on fresh runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download patch data only
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-delivery
+
+      - name: Validate patch, apply and commit with hooks disabled
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          EXPECTED_VERIFIED_PATCH_HASH: ${{ needs.verify.outputs.patch_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          git check-ref-format --branch "$WORKER_BRANCH"
+          delivery="${RUNNER_TEMP}/sanchuang-delivery"
+          patch="$delivery/implementation.patch"
+          test -s "$patch"
+          test -s "$delivery/patch.sha256"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$(cat "$delivery/patch.sha256")"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$EXPECTED_VERIFIED_PATCH_HASH"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git switch -c "$WORKER_BRANCH"
+          git config user.name "sanchuang-agent-worker[bot]"
+          git config user.email "sanchuang-agent-worker[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit -m "agent: implement issue #${ISSUE_NUMBER}"
+
+      - name: Push isolated branch without running repository scripts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git -c core.hooksPath=/dev/null push --set-upstream origin "HEAD:${WORKER_BRANCH}"
+
+      - name: Create and verify Draft PR
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          MODEL_ROUTE: ${{ needs.worker.outputs.model_route }}
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          issue_title="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" --jq '.title' | cut -c1-220)"
+          body="${RUNNER_TEMP}/sanchuang-delivery/pr-body.md"
+          cat > "$body" <<EOF
+          ## Sanchuang paid Worker handoff
+
+          - Work item: #${ISSUE_NUMBER} — ${issue_title}
+          - Delivery base: \`${BASE_BRANCH}\`
+          - Base SHA: \`${BASE_SHA}\`
+          - Worker branch: \`${WORKER_BRANCH}\`
+          - Model: \`${MODEL_ROUTE}\`
+          - Worker harness: OpenCode CLI 2.0.24
+          - Organization Skill: \`execute-work-item\`
+          - Trusted verification: PASS on exact patch in independent read-only verification Job
+          - Verification command: \`${VERIFICATION_COMMAND}\`
+          - Evidence: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          This PR is intentionally **Draft**. No merge, Issue closure, release or environment promotion authority is granted.
+          EOF
+          pr_url="$(gh pr create --draft --base "$BASE_BRANCH" --head "$WORKER_BRANCH" --title "agent: #${ISSUE_NUMBER} ${issue_title}" --body-file "$body")"
+          test -n "$pr_url"
+          pr_json="$(gh pr view "$pr_url" --json isDraft,baseRefName,headRefName,state)"
+          test "$(jq -r '.isDraft' <<< "$pr_json")" = "true"
+          test "$(jq -r '.baseRefName' <<< "$pr_json")" = "$BASE_BRANCH"
+          test "$(jq -r '.headRefName' <<< "$pr_json")" = "$WORKER_BRANCH"
+          test "$(jq -r '.state' <<< "$pr_json")" = "OPEN"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
