@@ -13,7 +13,7 @@
 
 1. 在 OpenCode Go 的工作区开通订阅，取得 Go API Key。**不要**放到 Issue、评论、仓库文件或 workflow_dispatch 输入。
 2. 给试点调用仓库配置 repository secret `SANCHUANG_OPENCODE_GO_API_KEY`，或使用仅授权明确仓库集合的组织级 secret。不同组织的凭证不可默认为通用。GitHub Connector 不提供读取密钥值或创建密钥的能力。
-3. 付费凭证仅注入模型 Runner 的 `OPENCODE_AUTH_CONTENT`；不传递给独立 verify/delivery jobs、工件或 PR 描述。模型和同 Runner shell 可以间接接触该执行环境：只用于可信、严格限权的付费额度，不应使用高权限通用密钥。
+3. 付费凭证仅注入模型 Runner 的 `OPENCODE_API_KEY` (OpenCode V2 的原生 Go 环境变量)；不传递给独立 verify/delivery jobs、工件或 PR 描述。模型和同 Runner shell 可以间接接触该执行环境：只用于可信、严格限权的付费额度，不应使用高权限通用密钥。
 4. 无密钥或未开通 Go 时 fail closed；**绝不**自动从免费切换成付费，或在付费失败时调用别的计费服务。
 
 ## 每仓库受控 opt-in
