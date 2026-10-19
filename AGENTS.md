@@ -116,8 +116,9 @@ A higher-priority instruction may change the requested outcome, but it cannot ma
 | Testing and evidence | [docs/engineering/testing-standard.md](docs/engineering/testing-standard.md) |
 | Browser-based UI evidence inside an authorized Worker | [skills/browser-verification/SKILL.md](skills/browser-verification/SKILL.md) |
 | Execute an explicitly authorized work item with OpenCode Worker | [skills/execute-work-item/SKILL.md](skills/execute-work-item/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
-| Dispatch an explicitly authorized existing Issue to the free Worker | [skills/dispatch-worker/SKILL.md](skills/dispatch-worker/SKILL.md) and [docs/engineering/external-worker.md](docs/engineering/external-worker.md) |
+| Dispatch an explicitly authorized existing Issue to the free or paid Worker | [skills/dispatch-worker/SKILL.md](skills/dispatch-worker/SKILL.md), [docs/engineering/external-worker.md](docs/engineering/external-worker.md), and [docs/engineering/paid-worker-onboarding.md](docs/engineering/paid-worker-onboarding.md) |
 | Enroll a repository in the standard free Worker | [docs/engineering/free-worker-onboarding.md](docs/engineering/free-worker-onboarding.md) and [workflow-templates/sanchuang-free-worker.yml](workflow-templates/sanchuang-free-worker.yml) |
+| Enroll a repository in the paid OpenCode Go Worker | [docs/engineering/paid-worker-onboarding.md](docs/engineering/paid-worker-onboarding.md) |
 | Organization AI PR Review | [ai-review/POLICY.md](ai-review/POLICY.md) and [ai-review/OUTPUT-CONTRACT.md](ai-review/OUTPUT-CONTRACT.md) |
 | AI Review execution architecture | [ai-review/GATEWAY.md](ai-review/GATEWAY.md) |
 
