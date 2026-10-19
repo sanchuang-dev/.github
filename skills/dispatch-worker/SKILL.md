@@ -1,11 +1,11 @@
 ---
 name: dispatch-worker
-description: Dispatch one explicitly authorized Sanchuang GitHub Issue to the isolated free OpenCode V2 Worker and report real Actions and Draft PR evidence; never infer execution from natural-language trigger text alone.
+description: Dispatch an explicitly authorized Sanchuang Issue through a reviewed free or paid OpenCode Worker caller, with exact GitHub comment and cost authorization; report real Actions and Draft PR evidence.
 ---
 
 # Dispatch Sanchuang Worker
 
-This Skill is for a **dispatcher AI**, not the implementation agent. Never give the implementation Worker permission to invoke this Skill or to self-dispatch.
+This Skill is for a **dispatcher AI**, not the implementation agent. Never give the implementation Worker permission to invoke this Skill or to self-dispatch. **Free and paid execution are never interchangeable**, and paid usage must be explicit.
 
 ## Intent and trigger phrases
 
@@ -80,6 +80,26 @@ gh workflow run sanchuang-free-worker.yml \
 Replace every placeholder with verified values; never execute this example unchanged. Use the user's explicitly chosen allowlisted model where supplied. Do not send a key through a CLI argument, prompt, chat, Issue, or Actions input.
 
 If neither the GitHub Issue-comment route nor workflow-dispatch action is available, direct the maintainer to the GitHub Actions **Run workflow** UI or report the gap. Do not switch to a remote computer or local `gh` unless the user explicitly authorizes that channel for the current task. Never claim dispatch succeeded without a verified Actions run URL.
+
+## Paid OpenCode Go route (independent, explicit opt-in)
+
+Use the same GitHub-native Issue-comment dispatch *experience* for paid only when the maintainer explicitly requests **paid** work and the target repository has a **separately reviewed** `.github/workflows/sanchuang-paid-worker.yml` caller on its default branch with `issue_comment: created`. The Organization paid reusable engine alone, or a manual-only paid caller, is **not** sufficient.
+
+- Exact single-line, whole-comment paid directive (no arguments, newlines or suffixes):
+
+```text
+/paid-worker run
+```
+
+- Fixed model route: `opencode-go/deepseek-v4.1-flash`. Caller must pin the immutable Organization paid reusable workflow SHA, retain trusted repository verification, and reference a restricted `SANCHUANG_OPENCODE_GO_API_KEY` GitHub secret; **never** place credentials in comments, Issues, workflow inputs, or chat. The Go API key remains isolated to the model Runner.
+- Existing `/worker run` and `/free-worker run` stay **free**. Never auto-upgrade an unqualified worker instruction into paid, switch from free to paid after a failure, or reuse a comment to silently retry.
+- Before commenting, read the existing **open ordinary Issue** and verify that its executable task contract and current maintainer instruction authorize **paid** implementation. Check for an existing run/PR for the same Issue; do not double-dispatch. Verify the exact paid caller is installed on the repository's current default branch, that its comment gate is enabled, that it shares the entire-run per-Issue concurrency group with the free caller, and that its engineering delivery base is approved.
+- The caller must reject bot and PR comments, edited/deleted comments, unmatched author/sender/actor, authors lacking current `write|maintain|admin` permission, malformed or multiline commands, closed/empty-contract Issues, non-default branch/stale default-tip revisions, and invalid target bases. Check **the installed caller**, not just this documentation.
+- Submit the one exact comment with the connected GitHub Issue-comment action under an authorized **human** GitHub identity. A comment API success is **not** evidence of an Actions run, model inference, successful verification, or delivered PR.
+- Observe a newly created paid workflow run, check guard → model worker → independent verify → Draft PR delivery, and report actual Run/PR links and cost-bearing model route. If the paid caller is still manual-only, stop and report that limit; do not post a ceremonial comment or switch to a computer/CLI channel without current authorization.
+- Paid Worker dispatch authorizes only that bounded Issue's implementation. No automatic merge, Issue acceptance/closure, deployment, environment promotion or cost-bearing test runs without separate authority.
+
+For enrollment and current pilot status, see [paid-worker-onboarding.md](../../docs/engineering/paid-worker-onboarding.md).
 
 ## Verification and handoff
 
