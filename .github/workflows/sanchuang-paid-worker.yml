@@ -336,10 +336,10 @@ jobs:
             echo "::error::Missing paid OpenCode Go API key." >&2
             exit 1
           fi
-          # Only the read-only model job receives this credential.
-          export OPENCODE_AUTH_CONTENT
-          OPENCODE_AUTH_CONTENT="$(jq -cn --arg key "$OPENCODE_GO_API_KEY" '{"opencode-go":{"type":"api","key":$key}}')"
-          unset OPENCODE_GO_API_KEY OPENCODE_API_KEY PROVIDER_API_KEY
+          # OpenCode V2's native Go provider reads OPENCODE_API_KEY.
+          # Only this read-only model job receives the credential.
+          export OPENCODE_API_KEY="$OPENCODE_GO_API_KEY"
+          unset OPENCODE_GO_API_KEY PROVIDER_API_KEY OPENCODE_AUTH_CONTENT
           unset OPENCODE_DISABLE_MODELS_FETCH OPENCODE_DISABLE_DEFAULT_PLUGINS
 
           export OPENCODE_CONFIG_CONTENT
