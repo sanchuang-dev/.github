@@ -605,6 +605,798 @@ jobs:
         run: |
           set -euo pipefail
           git add -A
+          # Fail closed on non-mechanical whitespace errors, but recover safe
+          # trailing blank lines in newly created text files before packaging.
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+          
+          # git diff HEAD --check in the earlier step does not inspect untracked files.
+          # Only correct a new regular text file whose sole reported problem is a blank
+          # line at EOF. Every other whitespace error remains a hard failure.
+          check = subprocess.run(
+              ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.quotepath=false',
+               'diff', '--cached', '--check'],
+              capture_output=True, text=True, check=False,
+          )
+          if check.returncode == 0:
+              sys.exit(0)
+          
+          issues = (check.stdout + check.stderr).splitlines()
+          parsed = [re.fullmatch(r'(.+):[0-9]+: new blank line at EOF\.', issue) for issue in issues]
+          if not issues or any(match is None for match in parsed):
+              sys.stderr.write('Unrecognized whitespace errors; refusing automatic edits:\n' + check.stdout + check.stderr)
+              sys.exit(1)
+          
+          added_files = {
+              os.fsdecode(path) for path in subprocess.check_output([
+                  'git', 'diff', '--cached', '--diff-filter=A', '--name-only', '-z',
+              ]).split(b'\0') if path
+          }
+          for path in sorted({match.group(1) for match in parsed if match}):
+              file = Path(path)
+              if (path not in added_files or file.is_symlink() or not file.is_file()
+                      or not file.resolve().is_relative_to(Path.cwd().resolve())):
+                  sys.stderr.write(f'Refusing to normalize non-new or unsafe file: {path}\n')
+                  sys.exit(1)
+              original = file.read_bytes()
+              if b'\0' in original:
+                  sys.stderr.write(f'Refusing to normalize binary file: {path}\n')
+                  sys.exit(1)
+              if original.endswith(b'\r\n\r\n'):
+                  normalized = re.sub(rb'(?:\r\n){2,}
+          git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
+          test -s "$patch"
+          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+          sha256sum "$patch" | awk '{print $1}' > "${RUNNER_TEMP}/sanchuang-worker/patch.sha256"
+
+      - name: Upload candidate patch for isolated verification and recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.identity.outputs.patch_artifact_name }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/implementation.patch
+            ${{ runner.temp }}/sanchuang-worker/patch.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Finalize structured Worker evidence
+        id: evidence
+        if: always()
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
+          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
+          PR_URL: ""
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+          REQUESTED_PROVIDER: ${{ inputs.provider }}
+          REQUESTED_MODEL: ${{ inputs.model }}
+          REQUESTED_PROVIDER_PROFILE: ${{ inputs.provider_profile }}
+          REQUESTED_PROVIDER_REGISTRY_REF: ${{ inputs.provider_registry_ref }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          IDENTITY_OUTCOME: ${{ steps.identity.outcome }}
+          PROVIDER_OUTCOME: ${{ steps.provider.outcome }}
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          VERSION_OUTCOME: ${{ steps.version.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker.outcome }}
+          BOUNDED_OUTCOME: ${{ steps.bounded.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          root="${RUNNER_TEMP}/sanchuang-worker"
+          mkdir -p "$root"
+
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git status --short > "$root/changed-files.txt" || true
+            if test -n "${BASE_SHA:-}" && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git diff --name-status "${BASE_SHA}"...HEAD > "$root/committed-files.txt" || true
+              git diff --stat "${BASE_SHA}"...HEAD > "$root/diff-stat.txt" || true
+            else
+              git diff --name-status > "$root/committed-files.txt" || true
+              git diff --stat > "$root/diff-stat.txt" || true
+            fi
+          fi
+
+          export TERMINAL_STATUS FAILURE_STAGE
+          read -r TERMINAL_STATUS FAILURE_STAGE < <(python3 - <<'PY'
+          import os
+          stages = [
+              ("validate", os.getenv("VALIDATE_OUTCOME")),
+              ("checkout", os.getenv("CHECKOUT_OUTCOME")),
+              ("identity", os.getenv("IDENTITY_OUTCOME")),
+              ("provider", os.getenv("PROVIDER_OUTCOME")),
+              ("policy", os.getenv("POLICY_OUTCOME")),
+              ("install", os.getenv("INSTALL_OUTCOME")),
+              ("version", os.getenv("VERSION_OUTCOME")),
+              ("worker", os.getenv("WORKER_OUTCOME")),
+              ("bounded_change", os.getenv("BOUNDED_OUTCOME")),
+              ("patch_package", os.getenv("PACKAGE_OUTCOME")),
+          ]
+          failed = next((name for name, outcome in stages if outcome == "failure"), "")
+          terminal = "failure" if failed else ("success" if all(outcome in {"success", "skipped"} for _, outcome in stages) else "incomplete")
+          print(terminal, failed or "none")
+          PY
+          )
+
+          export RUN_ENDED_AT
+          RUN_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export COMMIT_SHA
+          COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
+          identity = {}
+          p = root / "identity.txt"
+          if p.exists():
+              for line in p.read_text(errors="replace").splitlines():
+                  if "=" in line:
+                      k, v = line.split("=", 1)
+                      identity[k.strip()] = v.strip()
+
+          stages = {
+              "validate": os.getenv("VALIDATE_OUTCOME"),
+              "checkout": os.getenv("CHECKOUT_OUTCOME"),
+              "identity": os.getenv("IDENTITY_OUTCOME"),
+              "provider": os.getenv("PROVIDER_OUTCOME"),
+              "policy": os.getenv("POLICY_OUTCOME"),
+              "install": os.getenv("INSTALL_OUTCOME"),
+              "version": os.getenv("VERSION_OUTCOME"),
+              "worker": os.getenv("WORKER_OUTCOME"),
+              "bounded_change": os.getenv("BOUNDED_OUTCOME"),
+              "patch_package": os.getenv("PACKAGE_OUTCOME"),
+          }
+
+          session = {}
+          sp = root / "session-summary.json"
+          if sp.exists():
+              try:
+                  session = json.loads(sp.read_text())
+              except Exception:
+                  session = {"available": False, "reason": "invalid_session_summary"}
+
+          payload = {
+              "schema_version": 1,
+              "run_id": identity.get("run_id") or os.getenv("GITHUB_RUN_ID"),
+              "run_attempt": identity.get("run_attempt") or os.getenv("GITHUB_RUN_ATTEMPT"),
+              "repository": os.getenv("GITHUB_REPOSITORY"),
+              "issue_number": int(os.getenv("ISSUE_NUMBER")) if os.getenv("ISSUE_NUMBER") else None,
+              "base_branch": os.getenv("BASE_BRANCH"),
+              "base_sha": os.getenv("BASE_SHA") or identity.get("base_sha"),
+              "worker_branch": os.getenv("WORKER_BRANCH") or identity.get("worker_branch"),
+              "opencode_version": identity.get("opencode_version", "2.0.24"),
+              "requested_provider": os.getenv("REQUESTED_PROVIDER") or "opencode-go",
+              "requested_provider_profile": os.getenv("REQUESTED_PROVIDER_PROFILE") or None,
+              "requested_provider_registry_ref": os.getenv("REQUESTED_PROVIDER_REGISTRY_REF") or None,
+              "requested_model": os.getenv("REQUESTED_MODEL") or "deepseek-v4.1-flash",
+              "provider": identity.get("provider"),
+              "provider_profile": identity.get("provider_profile") or None,
+              "provider_registry_ref": identity.get("provider_registry_ref"),
+              "provider_registry_sha": identity.get("provider_registry_sha"),
+              "model": identity.get("model"),
+              "model_route": identity.get("model_route"),
+              "skill_commit": identity.get("skill_commit"),
+              "started_at": identity.get("run_started_at"),
+              "ended_at": os.getenv("RUN_ENDED_AT"),
+              "terminal_status": "ready_for_verification" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
+              "failure_stage": os.getenv("FAILURE_STAGE"),
+              "stages": stages,
+              "session": session,
+              "commit_sha": None, # trusted delivery in a separate runner
+              "draft_pr_url": os.getenv("PR_URL") or None,
+              "verification": {
+                  "command": (os.getenv("VERIFICATION_COMMAND") or "")[:4000],
+                  "outcome": "pending_independent_verification",
+              },
+              "artifact_retention_days": 14,
+              "safety": {
+                  "raw_environment_persisted": False,
+                  "provider_credentials_persisted": False,
+                  "provider_config_run_scoped": True,
+                  "github_token_persisted": False,
+                  "session_content_policy": "metadata-only trajectory; sanitized export removed after extraction",
+                  "worker_output_limit_bytes": 120000,
+                  "verification_output_limit_bytes": 120000,
+              },
+          }
+          (root / "worker-run.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Upload Worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-external-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/worker-run.json
+            ${{ runner.temp }}/sanchuang-worker/trajectory.jsonl
+            ${{ runner.temp }}/sanchuang-worker/session-summary.json
+            ${{ runner.temp }}/sanchuang-worker/worker-output.txt
+            ${{ runner.temp }}/sanchuang-worker/worker-progress.jsonl
+            ${{ runner.temp }}/sanchuang-worker/worker-output-meta.json
+            ${{ runner.temp }}/sanchuang-worker/verification.log
+            ${{ runner.temp }}/sanchuang-worker/verification-meta.json
+            ${{ runner.temp }}/sanchuang-worker/changed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/committed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/diff-stat.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  verify:
+    # Exact patch is rehydrated and independently checked before any write token exists.
+    needs: worker
+    if: ${{ needs.worker.result == 'success' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      patch_sha256: ${{ steps.apply.outputs.patch_sha256 }}
+    steps:
+      - name: Checkout frozen base on separate read-only runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact implementation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch
+
+      - name: Apply immutable patch for independent verification
+        id: apply
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          evidence="${RUNNER_TEMP}/sanchuang-verified-patch"
+          patch="$evidence/implementation.patch"
+          test -s "$patch"
+          test -s "$evidence/patch.sha256"
+          hash="$(sha256sum "$patch" | awk '{print $1}')"
+          test "$hash" = "$(cat "$evidence/patch.sha256")"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          echo "patch_sha256=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Run trusted verification against rehydrated patch bytes
+        id: verify
+        shell: bash
+        env:
+          SANCHUANG_VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          test -n "$SANCHUANG_VERIFICATION_COMMAND"
+          log="${RUNNER_TEMP}/sanchuang-verified-patch/verification.raw"
+          set +e
+          {
+            echo "$ $SANCHUANG_VERIFICATION_COMMAND"
+            bash -lc "$SANCHUANG_VERIFICATION_COMMAND"
+          } 2>&1 | tee "$log"
+          verification_rc="${PIPESTATUS[0]}"
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-verified-patch"
+          data = (root / "verification.raw").read_bytes()
+          (root / "verification.log").write_bytes(data[:120_000] + (b"\\n[truncated]\\n" if len(data) > 120_000 else b""))
+          PY
+          patch="${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          # Verification must not silently mutate the exact staged source snapshot.
+          git -c core.hooksPath=/dev/null apply --reverse --check --index "$patch"
+          git diff --quiet
+          exit "$verification_rc"
+
+      - name: Upload independently verified evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-paid-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch/verification.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  delivery:
+    # A separate fresh runner, with no model process or modified Git hooks.
+    needs: [worker, verify]
+    if: ${{ needs.worker.result == 'success' && needs.verify.result == 'success' }}
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pull_request_url: ${{ steps.pr.outputs.url }}
+    steps:
+      - name: Checkout frozen trusted base on fresh runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download patch data only
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-delivery
+
+      - name: Validate patch, apply and commit with hooks disabled
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          EXPECTED_VERIFIED_PATCH_HASH: ${{ needs.verify.outputs.patch_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          git check-ref-format --branch "$WORKER_BRANCH"
+          delivery="${RUNNER_TEMP}/sanchuang-delivery"
+          patch="$delivery/implementation.patch"
+          test -s "$patch"
+          test -s "$delivery/patch.sha256"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$(cat "$delivery/patch.sha256")"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$EXPECTED_VERIFIED_PATCH_HASH"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git switch -c "$WORKER_BRANCH"
+          git config user.name "sanchuang-agent-worker[bot]"
+          git config user.email "sanchuang-agent-worker[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit -m "agent: implement issue #${ISSUE_NUMBER}"
+
+      - name: Push isolated branch without running repository scripts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git -c core.hooksPath=/dev/null push --set-upstream origin "HEAD:${WORKER_BRANCH}"
+
+      - name: Create and verify Draft PR
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          MODEL_ROUTE: ${{ needs.worker.outputs.model_route }}
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          issue_title="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" --jq '.title' | cut -c1-220)"
+          body="${RUNNER_TEMP}/sanchuang-delivery/pr-body.md"
+          cat > "$body" <<EOF
+          ## Sanchuang paid Worker handoff
+
+          - Work item: #${ISSUE_NUMBER} — ${issue_title}
+          - Delivery base: \`${BASE_BRANCH}\`
+          - Base SHA: \`${BASE_SHA}\`
+          - Worker branch: \`${WORKER_BRANCH}\`
+          - Model: \`${MODEL_ROUTE}\`
+          - Worker harness: OpenCode CLI 2.0.24
+          - Organization Skill: \`execute-work-item\`
+          - Trusted verification: PASS on exact patch in independent read-only verification Job
+          - Verification command: \`${VERIFICATION_COMMAND}\`
+          - Evidence: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          This PR is intentionally **Draft**. No merge, Issue closure, release or environment promotion authority is granted.
+          EOF
+          pr_url="$(gh pr create --draft --base "$BASE_BRANCH" --head "$WORKER_BRANCH" --title "agent: #${ISSUE_NUMBER} ${issue_title}" --body-file "$body")"
+          test -n "$pr_url"
+          pr_json="$(gh pr view "$pr_url" --json isDraft,baseRefName,headRefName,state)"
+          test "$(jq -r '.isDraft' <<< "$pr_json")" = "true"
+          test "$(jq -r '.baseRefName' <<< "$pr_json")" = "$BASE_BRANCH"
+          test "$(jq -r '.headRefName' <<< "$pr_json")" = "$WORKER_BRANCH"
+          test "$(jq -r '.state' <<< "$pr_json")" = "OPEN"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+, b'\r\n', original)
+              elif original.endswith(b'\n\n'):
+                  normalized = re.sub(rb'\n{2,}
+          git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
+          test -s "$patch"
+          test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
+          sha256sum "$patch" | awk '{print $1}' > "${RUNNER_TEMP}/sanchuang-worker/patch.sha256"
+
+      - name: Upload verified patch as data for a fresh delivery runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.identity.outputs.patch_artifact_name }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/implementation.patch
+            ${{ runner.temp }}/sanchuang-worker/patch.sha256
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Finalize structured Worker evidence
+        id: evidence
+        if: always()
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
+          WORKER_BRANCH: ${{ steps.identity.outputs.worker_branch }}
+          PR_URL: ""
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+          REQUESTED_PROVIDER: ${{ inputs.provider }}
+          REQUESTED_MODEL: ${{ inputs.model }}
+          REQUESTED_PROVIDER_PROFILE: ${{ inputs.provider_profile }}
+          REQUESTED_PROVIDER_REGISTRY_REF: ${{ inputs.provider_registry_ref }}
+          VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          IDENTITY_OUTCOME: ${{ steps.identity.outcome }}
+          PROVIDER_OUTCOME: ${{ steps.provider.outcome }}
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          VERSION_OUTCOME: ${{ steps.version.outcome }}
+          WORKER_OUTCOME: ${{ steps.worker.outcome }}
+          BOUNDED_OUTCOME: ${{ steps.bounded.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+        run: |
+          set -euo pipefail
+
+          root="${RUNNER_TEMP}/sanchuang-worker"
+          mkdir -p "$root"
+
+          if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git status --short > "$root/changed-files.txt" || true
+            if test -n "${BASE_SHA:-}" && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git diff --name-status "${BASE_SHA}"...HEAD > "$root/committed-files.txt" || true
+              git diff --stat "${BASE_SHA}"...HEAD > "$root/diff-stat.txt" || true
+            else
+              git diff --name-status > "$root/committed-files.txt" || true
+              git diff --stat > "$root/diff-stat.txt" || true
+            fi
+          fi
+
+          export TERMINAL_STATUS FAILURE_STAGE
+          read -r TERMINAL_STATUS FAILURE_STAGE < <(python3 - <<'PY'
+          import os
+          stages = [
+              ("validate", os.getenv("VALIDATE_OUTCOME")),
+              ("checkout", os.getenv("CHECKOUT_OUTCOME")),
+              ("identity", os.getenv("IDENTITY_OUTCOME")),
+              ("provider", os.getenv("PROVIDER_OUTCOME")),
+              ("policy", os.getenv("POLICY_OUTCOME")),
+              ("install", os.getenv("INSTALL_OUTCOME")),
+              ("version", os.getenv("VERSION_OUTCOME")),
+              ("worker", os.getenv("WORKER_OUTCOME")),
+              ("bounded_change", os.getenv("BOUNDED_OUTCOME")),
+              ("patch_package", os.getenv("PACKAGE_OUTCOME")),
+          ]
+          failed = next((name for name, outcome in stages if outcome == "failure"), "")
+          terminal = "failure" if failed else ("success" if all(outcome in {"success", "skipped"} for _, outcome in stages) else "incomplete")
+          print(terminal, failed or "none")
+          PY
+          )
+
+          export RUN_ENDED_AT
+          RUN_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export COMMIT_SHA
+          COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-worker"
+          identity = {}
+          p = root / "identity.txt"
+          if p.exists():
+              for line in p.read_text(errors="replace").splitlines():
+                  if "=" in line:
+                      k, v = line.split("=", 1)
+                      identity[k.strip()] = v.strip()
+
+          stages = {
+              "validate": os.getenv("VALIDATE_OUTCOME"),
+              "checkout": os.getenv("CHECKOUT_OUTCOME"),
+              "identity": os.getenv("IDENTITY_OUTCOME"),
+              "provider": os.getenv("PROVIDER_OUTCOME"),
+              "policy": os.getenv("POLICY_OUTCOME"),
+              "install": os.getenv("INSTALL_OUTCOME"),
+              "version": os.getenv("VERSION_OUTCOME"),
+              "worker": os.getenv("WORKER_OUTCOME"),
+              "bounded_change": os.getenv("BOUNDED_OUTCOME"),
+              "patch_package": os.getenv("PACKAGE_OUTCOME"),
+          }
+
+          session = {}
+          sp = root / "session-summary.json"
+          if sp.exists():
+              try:
+                  session = json.loads(sp.read_text())
+              except Exception:
+                  session = {"available": False, "reason": "invalid_session_summary"}
+
+          payload = {
+              "schema_version": 1,
+              "run_id": identity.get("run_id") or os.getenv("GITHUB_RUN_ID"),
+              "run_attempt": identity.get("run_attempt") or os.getenv("GITHUB_RUN_ATTEMPT"),
+              "repository": os.getenv("GITHUB_REPOSITORY"),
+              "issue_number": int(os.getenv("ISSUE_NUMBER")) if os.getenv("ISSUE_NUMBER") else None,
+              "base_branch": os.getenv("BASE_BRANCH"),
+              "base_sha": os.getenv("BASE_SHA") or identity.get("base_sha"),
+              "worker_branch": os.getenv("WORKER_BRANCH") or identity.get("worker_branch"),
+              "opencode_version": identity.get("opencode_version", "2.0.24"),
+              "requested_provider": os.getenv("REQUESTED_PROVIDER") or "opencode-go",
+              "requested_provider_profile": os.getenv("REQUESTED_PROVIDER_PROFILE") or None,
+              "requested_provider_registry_ref": os.getenv("REQUESTED_PROVIDER_REGISTRY_REF") or None,
+              "requested_model": os.getenv("REQUESTED_MODEL") or "deepseek-v4.1-flash",
+              "provider": identity.get("provider"),
+              "provider_profile": identity.get("provider_profile") or None,
+              "provider_registry_ref": identity.get("provider_registry_ref"),
+              "provider_registry_sha": identity.get("provider_registry_sha"),
+              "model": identity.get("model"),
+              "model_route": identity.get("model_route"),
+              "skill_commit": identity.get("skill_commit"),
+              "started_at": identity.get("run_started_at"),
+              "ended_at": os.getenv("RUN_ENDED_AT"),
+              "terminal_status": "ready_for_verification" if os.getenv("TERMINAL_STATUS") == "success" else os.getenv("TERMINAL_STATUS"),
+              "failure_stage": os.getenv("FAILURE_STAGE"),
+              "stages": stages,
+              "session": session,
+              "commit_sha": None, # trusted delivery in a separate runner
+              "draft_pr_url": os.getenv("PR_URL") or None,
+              "verification": {
+                  "command": (os.getenv("VERIFICATION_COMMAND") or "")[:4000],
+                  "outcome": "pending_independent_verification",
+              },
+              "artifact_retention_days": 14,
+              "safety": {
+                  "raw_environment_persisted": False,
+                  "provider_credentials_persisted": False,
+                  "provider_config_run_scoped": True,
+                  "github_token_persisted": False,
+                  "session_content_policy": "metadata-only trajectory; sanitized export removed after extraction",
+                  "worker_output_limit_bytes": 120000,
+                  "verification_output_limit_bytes": 120000,
+              },
+          }
+          (root / "worker-run.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Upload Worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-external-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sanchuang-worker/worker-run.json
+            ${{ runner.temp }}/sanchuang-worker/trajectory.jsonl
+            ${{ runner.temp }}/sanchuang-worker/session-summary.json
+            ${{ runner.temp }}/sanchuang-worker/worker-output.txt
+            ${{ runner.temp }}/sanchuang-worker/worker-progress.jsonl
+            ${{ runner.temp }}/sanchuang-worker/worker-output-meta.json
+            ${{ runner.temp }}/sanchuang-worker/verification.log
+            ${{ runner.temp }}/sanchuang-worker/verification-meta.json
+            ${{ runner.temp }}/sanchuang-worker/changed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/committed-files.txt
+            ${{ runner.temp }}/sanchuang-worker/diff-stat.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  verify:
+    # Exact patch is rehydrated and independently checked before any write token exists.
+    needs: worker
+    if: ${{ needs.worker.result == 'success' }}
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      patch_sha256: ${{ steps.apply.outputs.patch_sha256 }}
+    steps:
+      - name: Checkout frozen base on separate read-only runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact implementation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch
+
+      - name: Apply immutable patch for independent verification
+        id: apply
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          evidence="${RUNNER_TEMP}/sanchuang-verified-patch"
+          patch="$evidence/implementation.patch"
+          test -s "$patch"
+          test -s "$evidence/patch.sha256"
+          hash="$(sha256sum "$patch" | awk '{print $1}')"
+          test "$hash" = "$(cat "$evidence/patch.sha256")"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          echo "patch_sha256=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Run trusted verification against rehydrated patch bytes
+        id: verify
+        shell: bash
+        env:
+          SANCHUANG_VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          test -n "$SANCHUANG_VERIFICATION_COMMAND"
+          log="${RUNNER_TEMP}/sanchuang-verified-patch/verification.raw"
+          set +e
+          {
+            echo "$ $SANCHUANG_VERIFICATION_COMMAND"
+            bash -lc "$SANCHUANG_VERIFICATION_COMMAND"
+          } 2>&1 | tee "$log"
+          verification_rc="${PIPESTATUS[0]}"
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ["RUNNER_TEMP"]) / "sanchuang-verified-patch"
+          data = (root / "verification.raw").read_bytes()
+          (root / "verification.log").write_bytes(data[:120_000] + (b"\\n[truncated]\\n" if len(data) > 120_000 else b""))
+          PY
+          patch="${RUNNER_TEMP}/sanchuang-verified-patch/implementation.patch"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "${{ steps.apply.outputs.patch_sha256 }}"
+          # Verification must not silently mutate the exact staged source snapshot.
+          git -c core.hooksPath=/dev/null apply --reverse --check --index "$patch"
+          git diff --quiet
+          exit "$verification_rc"
+
+      - name: Upload independently verified evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanchuang-paid-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sanchuang-verified-patch/verification.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  delivery:
+    # A separate fresh runner, with no model process or modified Git hooks.
+    needs: [worker, verify]
+    if: ${{ needs.worker.result == 'success' && needs.verify.result == 'success' }}
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pull_request_url: ${{ steps.pr.outputs.url }}
+    steps:
+      - name: Checkout frozen trusted base on fresh runner
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.worker.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download patch data only
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.worker.outputs.patch_artifact_name }}
+          path: ${{ runner.temp }}/sanchuang-delivery
+
+      - name: Validate patch, apply and commit with hooks disabled
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          EXPECTED_VERIFIED_PATCH_HASH: ${{ needs.verify.outputs.patch_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          git check-ref-format --branch "$WORKER_BRANCH"
+          delivery="${RUNNER_TEMP}/sanchuang-delivery"
+          patch="$delivery/implementation.patch"
+          test -s "$patch"
+          test -s "$delivery/patch.sha256"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$(cat "$delivery/patch.sha256")"
+          test "$(sha256sum "$patch" | awk '{print $1}')" = "$EXPECTED_VERIFIED_PATCH_HASH"
+          git -c core.hooksPath=/dev/null apply --check --index "$patch"
+          git -c core.hooksPath=/dev/null apply --index "$patch"
+          git -c core.hooksPath=/dev/null diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git switch -c "$WORKER_BRANCH"
+          git config user.name "sanchuang-agent-worker[bot]"
+          git config user.email "sanchuang-agent-worker[bot]@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null commit -m "agent: implement issue #${ISSUE_NUMBER}"
+
+      - name: Push isolated branch without running repository scripts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git -c core.hooksPath=/dev/null push --set-upstream origin "HEAD:${WORKER_BRANCH}"
+
+      - name: Create and verify Draft PR
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          BASE_SHA: ${{ needs.worker.outputs.base_sha }}
+          WORKER_BRANCH: ${{ needs.worker.outputs.worker_branch }}
+          MODEL_ROUTE: ${{ needs.worker.outputs.model_route }}
+          VERIFICATION_COMMAND: ${{ inputs.verification_command }}
+        run: |
+          set -euo pipefail
+          issue_title="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" --jq '.title' | cut -c1-220)"
+          body="${RUNNER_TEMP}/sanchuang-delivery/pr-body.md"
+          cat > "$body" <<EOF
+          ## Sanchuang paid Worker handoff
+
+          - Work item: #${ISSUE_NUMBER} — ${issue_title}
+          - Delivery base: \`${BASE_BRANCH}\`
+          - Base SHA: \`${BASE_SHA}\`
+          - Worker branch: \`${WORKER_BRANCH}\`
+          - Model: \`${MODEL_ROUTE}\`
+          - Worker harness: OpenCode CLI 2.0.24
+          - Organization Skill: \`execute-work-item\`
+          - Trusted verification: PASS on exact patch in independent read-only verification Job
+          - Verification command: \`${VERIFICATION_COMMAND}\`
+          - Evidence: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          This PR is intentionally **Draft**. No merge, Issue closure, release or environment promotion authority is granted.
+          EOF
+          pr_url="$(gh pr create --draft --base "$BASE_BRANCH" --head "$WORKER_BRANCH" --title "agent: #${ISSUE_NUMBER} ${issue_title}" --body-file "$body")"
+          test -n "$pr_url"
+          pr_json="$(gh pr view "$pr_url" --json isDraft,baseRefName,headRefName,state)"
+          test "$(jq -r '.isDraft' <<< "$pr_json")" = "true"
+          test "$(jq -r '.baseRefName' <<< "$pr_json")" = "$BASE_BRANCH"
+          test "$(jq -r '.headRefName' <<< "$pr_json")" = "$WORKER_BRANCH"
+          test "$(jq -r '.state' <<< "$pr_json")" = "OPEN"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+, b'\n', original)
+              else:
+                  sys.stderr.write(f'Refusing unexpected EOF format: {path}\n')
+                  sys.exit(1)
+              file.write_bytes(normalized)
+              subprocess.run(['git', 'add', '--', path], check=True)
+              print(f'Normalized added blank line(s) at EOF: {path}')
+          PY
           git -c core.hooksPath=/dev/null diff --cached --check
           patch="${RUNNER_TEMP}/sanchuang-worker/implementation.patch"
           git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
