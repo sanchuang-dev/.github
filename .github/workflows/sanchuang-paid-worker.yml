@@ -605,6 +605,56 @@ jobs:
         run: |
           set -euo pipefail
           git add -A
+          # Normalize only a mechanical new-file EOF error before packaging.
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+          
+          # The earlier diff HEAD --check omits untracked files. Fix only the exact
+          # blank-EOF failure for new regular text files; never fix other lint errors.
+          check = subprocess.run(
+              ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.quotepath=false',
+               'diff', '--cached', '--check'],
+              capture_output=True, text=True, check=False,
+          )
+          if check.returncode == 0:
+              sys.exit(0)
+          
+          issues = (check.stdout + check.stderr).splitlines()
+          parsed = [re.fullmatch(r'(.+):[0-9]+: new blank line at EOF\.', issue) for issue in issues]
+          if not issues or any(match is None for match in parsed):
+              sys.stderr.write('Unrecognized whitespace errors; refusing automatic edits:\n' + check.stdout + check.stderr)
+              sys.exit(1)
+          
+          added_files = {
+              os.fsdecode(path) for path in subprocess.check_output([
+                  'git', 'diff', '--cached', '--diff-filter=A', '--name-only', '-z',
+              ]).split(b'\0') if path
+          }
+          for path in sorted({match.group(1) for match in parsed if match}):
+              file = Path(path)
+              if (path not in added_files or file.is_symlink() or not file.is_file()
+                      or not file.resolve().is_relative_to(Path.cwd().resolve())):
+                  sys.stderr.write(f'Refusing to normalize non-new or unsafe file: {path}\n')
+                  sys.exit(1)
+              original = file.read_bytes()
+              if b'\0' in original:
+                  sys.stderr.write(f'Refusing to normalize binary file: {path}\n')
+                  sys.exit(1)
+              if original.endswith(b'\r\n\r\n'):
+                  normalized = re.sub(rb'(?:\r\n){2,}$', b'\r\n', original)
+              elif original.endswith(b'\n\n'):
+                  normalized = re.sub(rb'\n{2,}$', b'\n', original)
+              else:
+                  sys.stderr.write(f'Refusing unexpected EOF format: {path}\n')
+                  sys.exit(1)
+              file.write_bytes(normalized)
+              subprocess.run(['git', 'add', '--', path], check=True)
+              print(f'Normalized added blank line(s) at EOF: {path}')
+          PY
           git -c core.hooksPath=/dev/null diff --cached --check
           patch="${RUNNER_TEMP}/sanchuang-worker/implementation.patch"
           git -c core.hooksPath=/dev/null diff --cached --binary --no-ext-diff --no-textconv > "$patch"
@@ -612,7 +662,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ steps.identity.outputs.base_sha }}"
           sha256sum "$patch" | awk '{print $1}' > "${RUNNER_TEMP}/sanchuang-worker/patch.sha256"
 
-      - name: Upload verified patch as data for a fresh delivery runner
+      - name: Upload candidate patch for isolated verification and recovery
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.identity.outputs.patch_artifact_name }}
@@ -620,7 +670,7 @@ jobs:
             ${{ runner.temp }}/sanchuang-worker/implementation.patch
             ${{ runner.temp }}/sanchuang-worker/patch.sha256
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 14
 
       - name: Finalize structured Worker evidence
         id: evidence
