@@ -38,6 +38,18 @@ It should normally have:
 
 If two parts can land, verify, or roll back independently, prefer two slices.
 
+### Execution viability: split by evidence and runtime, not merely by product feature
+
+Before marking a proposed implementation slice executable, examine the current code and dependencies and the *intended executor* (maintainer AI, DSH, GitHub OpenCode Worker, or human). An acceptable business outcome can still be too wide for a single bounded coding-agent run.
+
+- Determine whether the slice spans separately testable/high-risk boundaries (schema/migration, API, UI, permissions, external integration, release) that would need distinct evidence or recovery.
+- Account for repository discovery, edits, tests, likely troubleshooting and a recoverable handoff *inside* the executor's real time budget. A 30/60-minute GitHub Actions limit is not a promise of 30/60 minutes of productive coding.
+- Check prerequisites such as existing contracts, tests, fixtures and tool availability. Do not treat building an ad-hoc testing toolchain as negligible verification cost.
+- When scope exceeds the execution budget, split into independently useful implementation outcomes with explicit dependencies and verification, or route to a more suitable executor. Avoid arbitrary file-count/time quotas and artificial child Issues that cannot be accepted or rolled back separately.
+- For a repeat attempt, inspect any prior branch, PR, partial patch and failure record before redispatch. A cancelled run may still have valuable work; losing that work is an execution-system defect, not justification to repeat the entire card.
+
+This check applies to task cards for ChatGPT and DSH as well as OpenCode Workers. It does not grant autonomous authority to create extra Issues, use paid execution, modify implementation contracts, or accept work.
+
 ### Milestone shell
 
 Use this for a human-verifiable outcome that spans several implementation slices.
